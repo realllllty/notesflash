@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: notesflash --default, notesflash-dark --prefersdark;
+  logs: false;
+}
+
+@plugin "daisyui/theme" {
+  name: "notesflash";
+  default: true;
+  color-scheme: light;
+  --color-base-100: oklch(98.4% 0.004 86);
+  --color-base-200: oklch(96.4% 0.006 86);
+  --color-base-300: oklch(91.5% 0.008 86);
+  --color-base-content: oklch(24% 0.012 72);
+  --color-primary: oklch(54% 0.19 257);
+  --color-primary-content: oklch(98% 0.01 257);
+  --color-secondary: oklch(88% 0.04 255);
+  --color-secondary-content: oklch(34% 0.11 257);
+  --color-accent: oklch(88% 0.08 155);
+  --color-accent-content: oklch(30% 0.08 155);
+  --color-neutral: oklch(31% 0.015 72);
+  --color-neutral-content: oklch(96% 0.004 86);
+  --color-info: oklch(69% 0.14 232);
+  --color-success: oklch(67% 0.14 151);
+  --color-warning: oklch(78% 0.15 77);
+  --color-error: oklch(62% 0.22 27);
+  --radius-selector: 0.65rem;
+  --radius-field: 0.7rem;
+  --radius-box: 0.85rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "notesflash-dark";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(18% 0.008 72);
+  --color-base-200: oklch(21% 0.009 72);
+  --color-base-300: oklch(27% 0.01 72);
+  --color-base-content: oklch(92% 0.007 86);
+  --color-primary: oklch(70% 0.15 257);
+  --color-primary-content: oklch(18% 0.03 257);
+  --color-secondary: oklch(31% 0.05 257);
+  --color-secondary-content: oklch(87% 0.06 257);
+  --color-accent: oklch(36% 0.07 155);
+  --color-accent-content: oklch(90% 0.06 155);
+  --color-neutral: oklch(87% 0.008 86);
+  --color-neutral-content: oklch(20% 0.008 72);
+  --color-info: oklch(72% 0.13 232);
+  --color-success: oklch(72% 0.13 151);
+  --color-warning: oklch(81% 0.14 77);
+  --color-error: oklch(68% 0.2 27);
+  --radius-selector: 0.65rem;
+  --radius-field: 0.7rem;
+  --radius-box: 0.85rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--color-base-content);
+  background: var(--color-base-100);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --app-max-width: 760px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at top, color-mix(in oklab, var(--color-primary) 5%, transparent), transparent 34rem),
+    var(--color-base-100);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+}
+
+.app-shell {
+  width: min(100%, var(--app-max-width));
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: calc(0.75rem + var(--safe-top)) 0.85rem calc(2rem + var(--safe-bottom));
+}
+
+.surface {
+  background: color-mix(in oklab, var(--color-base-100) 94%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.note-prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 24px;
+}
+
+.note-prose mark {
+  color: inherit;
+  background: color-mix(in oklab, var(--color-warning) 46%, transparent);
+  border-radius: 0.22rem;
+  padding-inline: 0.08em;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (min-width: 760px) {
+  .app-shell {
+    padding-inline: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

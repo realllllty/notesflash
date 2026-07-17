@@ -1,0 +1,14 @@
+[Unit]
+Description=NotesFlash Cloudflare public HTTPS quick tunnel
+After=network-online.target notesflash-pwa.service
+Wants=network-online.target
+Requires=notesflash-pwa.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:4174
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

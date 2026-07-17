@@ -1,0 +1,29 @@
+{
+  "name": "notesflash-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "cloudflare": {
+    "bindings": {
+      "OWNER_SETUP_SECRET": {
+        "description": "Generate a unique value such as `openssl rand -hex 32`, save it in a password manager, and use it only for NotesFlash setup and emergency device recovery."
+      },
+      "VECTOR_INDEX": {
+        "description": "NotesFlash uses BGE-M3 vectors with **1024 dimensions** and the **cosine** metric."
+      }
+    }
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "npm run db:migrate:remote && wrangler deploy",
+    "deploy:worker": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260710.1",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.24.3"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notesflash-cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "INSTANCE_NAME": "NotesFlash Cloud",
+    "ALLOWED_ORIGINS": "*",
+    "EMBEDDING_MODEL": "@cf/baai/bge-m3",
+    "EMBEDDING_DIMENSIONS": "1024",
+    "SEMANTIC_MIN_SCORE": "0.45",
+    "MAX_IMAGE_BYTES": "12582912",
+    "SESSION_TTL_DAYS": "180",
+    "TRASH_RETENTION_DAYS": "30"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "notesflash-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "notesflash-images"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "VECTOR_INDEX",
+      "index_name": "notesflash-vectors"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "INDEX_QUEUE",
+        "queue": "notesflash-index"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "notesflash-index",
+        "max_batch_size": 20,
+        "max_batch_timeout": 5,
+        "max_retries": 5
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/setup"]
+  }
+}
