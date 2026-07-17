@@ -16,6 +16,7 @@
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { copyText } from '../lib/clipboard';
   import type { PairingCode, SortMode } from '../lib/types';
+  import ProxySettings from './ProxySettings.svelte';
 
   export let open = false;
   export let sortMode: SortMode = 'updated_desc';
@@ -305,6 +306,8 @@
         <p class="mt-2 text-xs text-error" role="alert">{connectionActionError}</p>
       {/if}
     </div>
+
+    <ProxySettings className="mt-3" />
 
     {#if !demoMode && connectionStatus === 'online' && createPairingCode}
       <section class="mt-3 rounded-box border border-base-300/70 p-3" aria-labelledby="pairing-code-title">

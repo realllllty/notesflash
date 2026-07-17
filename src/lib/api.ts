@@ -1,6 +1,7 @@
 import { characterNgrams, cosineSimilarity, makeSnippet, normalizeText } from './text';
 import {
-  markRuntimeTransportFailed,
+  ManualProxyProbeError,
+  markRuntimeResponseFailed,
   NativeHttpError,
   runtimeFetch,
   runtimeTransportForResponse,
@@ -520,7 +521,7 @@ async function readWorkerPayload(response: Response, endpoint: string): Promise<
     return await readPayload(response);
   } catch (error) {
     const transport = runtimeTransportForResponse(response);
-    if (transport) markRuntimeTransportFailed(endpoint, transport);
+    if (transport) markRuntimeResponseFailed(endpoint, response);
     if (transport === 'native') {
       throw mapWorkerNetworkError(new NativeHttpError(error), endpoint, 'response-body');
     }
@@ -533,6 +534,22 @@ function mapWorkerNetworkError(
   endpoint: string,
   phase: 'request' | 'response-body' = 'request'
 ): unknown {
+  if (error instanceof ManualProxyProbeError) {
+    const host = workerHost(endpoint);
+    const nativeReason = safeNetworkReason(error.nativeCause, 260);
+    return new ApiError(
+      `无法通过已配置的本地代理连接到 Cloudflare Worker（${host}）：${nativeReason}。` +
+      '请确认代理地址和端口，或清空代理以恢复系统网络。',
+      0,
+      'DESKTOP_PROXY_ERROR',
+      {
+        endpoint,
+        nativeReason,
+        transport: 'tauri-native-manual-proxy',
+        phase: 'health-probe'
+      }
+    );
+  }
   if (error instanceof TransportProbeError) {
     const host = workerHost(endpoint);
     const browserReason = safeNetworkReason(error.browserCause, 220);

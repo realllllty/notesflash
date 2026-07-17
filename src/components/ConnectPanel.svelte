@@ -3,6 +3,7 @@
   import { createEventDispatcher } from 'svelte';
   import { ApiError, pairDevice } from '../lib/api';
   import type { ConnectionProfile } from '../lib/types';
+  import ProxySettings from './ProxySettings.svelte';
 
   const dispatch = createEventDispatcher<{
     connected: ConnectionProfile;
@@ -17,14 +18,18 @@
   let deviceName = defaultDeviceName();
   let connecting = false;
   let errorMessage = '';
+  let proxySettingsOpen = false;
+  let proxySettings: ProxySettings | null = null;
 
   async function connect(): Promise<void> {
     connecting = true;
     errorMessage = '';
     try {
+      proxySettings?.commit();
       dispatch('connected', await pairDevice(endpoint, code, deviceName));
     } catch (error) {
       errorMessage = error instanceof ApiError || error instanceof Error ? error.message : '连接失败';
+      if (error instanceof ApiError && error.status === 0) proxySettingsOpen = true;
     } finally {
       connecting = false;
     }
@@ -119,6 +124,8 @@
           <input class="input input-bordered w-full bg-base-100" bind:value={deviceName} required />
         </label>
       </div>
+
+      <ProxySettings bind:this={proxySettings} bind:expanded={proxySettingsOpen} />
 
       {#if errorMessage}
         <div class="alert alert-error py-2 text-sm" role="alert">

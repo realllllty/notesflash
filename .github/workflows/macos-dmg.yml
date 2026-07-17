@@ -49,6 +49,9 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Build universal DMG
         run: npm run tauri -- build --target universal-apple-darwin --bundles dmg --ci
 

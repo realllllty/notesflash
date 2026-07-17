@@ -1,6 +1,8 @@
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+mod network_diagnostics;
+
 const MAIN_WINDOW_LABEL: &str = "main";
 const FOCUS_SEARCH_EVENT: &str = "notesflash://focus-search";
 
@@ -46,6 +48,9 @@ pub fn run() {
                 })
                 .build(),
         )
+        .invoke_handler(tauri::generate_handler![
+            network_diagnostics::diagnose_worker_network
+        ])
         .setup(|app| {
             if let Err(error) = app
                 .global_shortcut()
