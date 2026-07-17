@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CloudOff, Command, LoaderCircle, SearchX, Sparkles } from '@lucide/svelte';
+  import { CloudOff, Command, LoaderCircle, SearchX } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import ConnectPanel from './components/ConnectPanel.svelte';
   import NoteCard from './components/NoteCard.svelte';
@@ -891,7 +891,7 @@
     {:else if visibleHits.length === 0 && activeQuery.trim()}
       <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
         {#if searchPending}
-          <Sparkles size={16} class="text-primary" /> 正在搜索匹配内容…
+          <LoaderCircle size={16} class="animate-spin text-primary/70" /> 正在搜索匹配内容…
         {:else if canCreateFromSearch}
           没有现有匹配，可以直接创建。
         {:else}
@@ -899,7 +899,7 @@
         {/if}
       </div>
     {:else}
-      <section class="pb-16" aria-label="笔记流">
+      <section class="note-stream pb-16" aria-label="笔记流">
         {#each visibleHits as hit, index (hit.note.id)}
           <div id={`note-${hit.note.id}`}>
             {#if editingId === hit.note.id}
@@ -959,7 +959,7 @@
 
   {#if toastMessage}
     <div class="toast toast-center toast-bottom z-[70] pb-[calc(1rem+var(--safe-bottom))]">
-      <div class="alert min-h-0 border border-base-300 bg-neutral px-4 py-2 text-sm text-neutral-content shadow-lg">
+      <div class="nf-toast-in alert min-h-0 rounded-field border-0 bg-neutral px-4 py-2.5 text-sm text-neutral-content shadow-lg">
         <span>{toastMessage}</span>
       </div>
     </div>

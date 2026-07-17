@@ -13,25 +13,25 @@
   name: "notesflash";
   default: true;
   color-scheme: light;
-  --color-base-100: oklch(98.5% 0.003 255);
-  --color-base-200: oklch(96.6% 0.004 255);
-  --color-base-300: oklch(91.8% 0.006 255);
-  --color-base-content: oklch(23% 0.01 255);
-  --color-primary: oklch(55% 0.105 256);
-  --color-primary-content: oklch(98% 0.01 257);
-  --color-secondary: oklch(89% 0.022 255);
-  --color-secondary-content: oklch(34% 0.07 257);
-  --color-accent: oklch(88% 0.045 158);
-  --color-accent-content: oklch(30% 0.055 158);
-  --color-neutral: oklch(29% 0.012 255);
-  --color-neutral-content: oklch(96% 0.003 255);
-  --color-info: oklch(69% 0.14 232);
-  --color-success: oklch(67% 0.14 151);
-  --color-warning: oklch(78% 0.15 77);
-  --color-error: oklch(62% 0.22 27);
-  --radius-selector: 0.65rem;
-  --radius-field: 0.7rem;
-  --radius-box: 0.85rem;
+  --color-base-100: oklch(98.8% 0.0035 83);
+  --color-base-200: oklch(97% 0.0045 83);
+  --color-base-300: oklch(92.4% 0.006 80);
+  --color-base-content: oklch(24% 0.012 72);
+  --color-primary: oklch(52% 0.086 252);
+  --color-primary-content: oklch(98.5% 0.008 252);
+  --color-secondary: oklch(90% 0.012 80);
+  --color-secondary-content: oklch(33% 0.03 72);
+  --color-accent: oklch(60% 0.055 200);
+  --color-accent-content: oklch(97% 0.01 200);
+  --color-neutral: oklch(26% 0.011 72);
+  --color-neutral-content: oklch(96.5% 0.004 83);
+  --color-info: oklch(64% 0.11 232);
+  --color-success: oklch(62% 0.11 151);
+  --color-warning: oklch(80% 0.128 82);
+  --color-error: oklch(60% 0.19 27);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 0.8rem;
   --border: 1px;
   --depth: 0;
   --noise: 0;
@@ -41,25 +41,25 @@
   name: "notesflash-dark";
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: oklch(17.5% 0.006 255);
-  --color-base-200: oklch(21% 0.007 255);
-  --color-base-300: oklch(27% 0.009 255);
-  --color-base-content: oklch(92% 0.006 255);
-  --color-primary: oklch(71% 0.095 256);
-  --color-primary-content: oklch(18% 0.03 257);
-  --color-secondary: oklch(31% 0.032 257);
-  --color-secondary-content: oklch(87% 0.04 257);
-  --color-accent: oklch(35% 0.045 158);
-  --color-accent-content: oklch(90% 0.04 158);
-  --color-neutral: oklch(87% 0.006 255);
-  --color-neutral-content: oklch(20% 0.007 255);
-  --color-info: oklch(72% 0.13 232);
-  --color-success: oklch(72% 0.13 151);
-  --color-warning: oklch(81% 0.14 77);
-  --color-error: oklch(68% 0.2 27);
-  --radius-selector: 0.65rem;
-  --radius-field: 0.7rem;
-  --radius-box: 0.85rem;
+  --color-base-100: oklch(19.2% 0.005 75);
+  --color-base-200: oklch(22.6% 0.006 75);
+  --color-base-300: oklch(28.5% 0.008 75);
+  --color-base-content: oklch(90.5% 0.006 83);
+  --color-primary: oklch(74% 0.082 252);
+  --color-primary-content: oklch(19% 0.03 252);
+  --color-secondary: oklch(31% 0.026 255);
+  --color-secondary-content: oklch(88% 0.03 255);
+  --color-accent: oklch(66% 0.06 200);
+  --color-accent-content: oklch(17% 0.03 200);
+  --color-neutral: oklch(86% 0.006 83);
+  --color-neutral-content: oklch(20% 0.007 75);
+  --color-info: oklch(72% 0.11 232);
+  --color-success: oklch(72% 0.11 151);
+  --color-warning: oklch(82% 0.12 82);
+  --color-error: oklch(69% 0.18 27);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 0.8rem;
   --border: 1px;
   --depth: 0;
   --noise: 0;
@@ -74,6 +74,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   --app-max-width: 720px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -97,6 +98,7 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   background: var(--color-base-100);
+  letter-spacing: -0.006em;
 }
 
 button,
@@ -110,8 +112,22 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Refined, consistent motion on interactive controls without touching layout. */
+.btn {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.btn:active {
+  transform: translateY(0.5px) scale(0.985);
+}
+
 ::selection {
-  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 20%, transparent);
 }
 
 .app-shell {
@@ -126,13 +142,14 @@ button,
 }
 
 .surface {
-  background: color-mix(in oklab, var(--color-base-100) 97%, transparent);
-  border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
-  backdrop-filter: blur(20px);
+  background: color-mix(in oklab, var(--color-base-100) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 7%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
 }
 
 .focus-ring:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--color-primary) 60%, transparent);
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 55%, transparent);
   outline-offset: 2px;
 }
 
@@ -147,11 +164,11 @@ button,
   color: inherit;
   background: linear-gradient(
     to top,
-    color-mix(in oklab, var(--color-warning) 46%, transparent) 60%,
-    transparent 60%
+    color-mix(in oklab, var(--color-warning) 52%, transparent) 42%,
+    color-mix(in oklab, var(--color-warning) 20%, transparent) 42%
   );
-  border-radius: 2px;
-  padding-inline: 0;
+  border-radius: 3px;
+  padding-inline: 0.05em;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -178,13 +195,13 @@ button,
   position: absolute;
   z-index: 0;
   inset: 1px 0;
-  border-radius: 2px 5px 3px 4px;
+  border-radius: 4px;
   background: linear-gradient(
     99deg,
     transparent 0%,
-    color-mix(in oklab, var(--color-warning) 20%, transparent) 5%,
-    color-mix(in oklab, var(--color-warning) 38%, transparent) 45%,
-    color-mix(in oklab, var(--color-warning) 26%, transparent) 92%,
+    color-mix(in oklab, var(--color-warning) 18%, transparent) 6%,
+    color-mix(in oklab, var(--color-warning) 34%, transparent) 48%,
+    color-mix(in oklab, var(--color-warning) 22%, transparent) 92%,
     transparent 100%
   );
   content: '';
@@ -197,7 +214,7 @@ button,
 .note-line.current-match::before,
 .note-card-header.current-title-match::before,
 .note-editor-header.current-title-match::before {
-  animation: note-match-sweep 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: note-match-sweep 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .note-line-number,
@@ -214,7 +231,7 @@ button,
   inset-inline-end: calc(100% + var(--note-gutter-gap));
   width: var(--note-gutter-width);
   min-height: var(--note-line-height);
-  color: color-mix(in oklab, var(--color-base-content) 29%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 24%, transparent);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -262,6 +279,106 @@ button,
   100% {
     opacity: 1;
     transform: scaleX(1);
+  }
+}
+
+/* Subtle, purposeful entrance motion. Gated so reduced-motion users get none. */
+@keyframes nf-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nf-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes nf-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.975);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes nf-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nf-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .app-shell {
+    animation: nf-fade-rise 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .note-card,
+  .note-editor {
+    animation: nf-fade-rise 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Gentle stagger for the first cards as the stream expands. */
+  .note-stream > *:nth-child(1) .note-card { animation-delay: 0ms; }
+  .note-stream > *:nth-child(2) .note-card { animation-delay: 26ms; }
+  .note-stream > *:nth-child(3) .note-card { animation-delay: 52ms; }
+  .note-stream > *:nth-child(4) .note-card { animation-delay: 78ms; }
+  .note-stream > *:nth-child(5) .note-card { animation-delay: 104ms; }
+  .note-stream > *:nth-child(6) .note-card { animation-delay: 130ms; }
+  .note-stream > *:nth-child(7) .note-card { animation-delay: 156ms; }
+  .note-stream > *:nth-child(8) .note-card { animation-delay: 182ms; }
+
+  .nf-overlay-in {
+    animation: nf-fade-in 200ms ease both;
+  }
+
+  /* The settings panel is a bottom sheet on mobile and a centered dialog on
+     desktop; each has a different resting transform, so match both. */
+  .nf-settings-panel {
+    animation: nf-sheet-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @media (min-width: 640px) {
+    .nf-settings-panel {
+      animation: nf-pop-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+  }
+
+  .nf-toast-in {
+    animation: nf-toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 }
 

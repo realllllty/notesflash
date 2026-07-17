@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, normalizeEndpoint, pairDevice, RemoteNotesClient } from './api';
+import { ApiError, normalizeEndpoint, pairDevice, RemoteNotesClient, safeNetworkReason } from './api';
 
 describe('API endpoint and network errors', () => {
   afterEach(() => {
@@ -38,7 +38,7 @@ describe('API endpoint and network errors', () => {
     expect(error).toMatchObject({ status: 0, code: 'NETWORK_ERROR' });
     expect(error.message).toContain('无法连接到 Cloudflare Worker');
     expect(error.message).toContain('notesflash-cloud.example.workers.dev');
-    expect(error.message).not.toContain('Load failed');
+    expect(error.message).toContain('Load failed');
   });
 
   it('turns a Load failed rejection from a remote notes request into NETWORK_ERROR', async () => {
@@ -54,7 +54,8 @@ describe('API endpoint and network errors', () => {
     expect(error.message).toContain('notesflash-cloud.example.workers.dev');
     expect(error.payload).toEqual({
       endpoint: 'https://notesflash-cloud.example.workers.dev',
-      reason: 'Load failed'
+      reason: 'Load failed',
+      transport: 'browser'
     });
   });
 
@@ -95,6 +96,31 @@ describe('API endpoint and network errors', () => {
     expect(init).not.toHaveProperty('cache');
     const headers = new Headers(init.headers);
     expect(headers.get('authorization')).toBe('Bearer device-token');
+  });
+
+  it('redacts credentials and pairing codes from network diagnostics', () => {
+    expect(safeNetworkReason(
+      'failed Bearer secret-token at https://example.com/?token=abc123 using NF-ABCDE-23456'
+    )).toBe(
+      'failed Bearer [REDACTED] at https://example.com/ using [PAIRING_CODE_REDACTED]'
+    );
+  });
+
+  it('extracts a useful native reason from an invoke error object', () => {
+    expect(safeNetworkReason({
+      error: { message: 'invalid peer certificate: UnknownIssuer' }
+    })).toBe('invalid peer certificate: UnknownIssuer');
+  });
+
+  it('removes URL queries, fragments, credentials and key-like values from diagnostics', () => {
+    const reason = safeNetworkReason(
+      'request https://alice:pw@example.com/api/search/lexical?q=private-note#section ' +
+      'Authorization: Basic YWxpY2U6cHc= api_key=top-secret password=hunter2'
+    );
+
+    expect(reason).toContain('https://example.com/api/search/lexical');
+    expect(reason).toContain('Authorization: [REDACTED]');
+    expect(reason).not.toMatch(/private-note|alice|hunter2|top-secret|YWxpY2U6cHc=|#section|\?q=/);
   });
 });
 

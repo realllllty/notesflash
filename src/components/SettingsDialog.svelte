@@ -10,7 +10,7 @@
     Moon,
     PencilLine,
     RefreshCw,
-    Sparkles,
+    Waypoints,
     X
   } from '@lucide/svelte';
   import { createEventDispatcher, onDestroy } from 'svelte';
@@ -163,9 +163,9 @@
 </script>
 
 {#if open}
-  <div class="fixed inset-0 z-40 bg-neutral/25 backdrop-blur-[2px]" role="presentation" on:click={() => dispatch('close')}></div>
+  <div class="nf-overlay-in fixed inset-0 z-40 bg-neutral/25 backdrop-blur-[2px]" role="presentation" on:click={() => dispatch('close')}></div>
   <aside
-    class="surface fixed bottom-0 left-1/2 z-50 max-h-[88vh] w-full max-w-xl -translate-x-1/2 overflow-y-auto rounded-t-box p-5 shadow-2xl sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2 sm:rounded-box"
+    class="nf-settings-panel surface fixed bottom-0 left-1/2 z-50 max-h-[88vh] w-full max-w-xl -translate-x-1/2 overflow-y-auto rounded-t-box p-5 shadow-2xl sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2 sm:rounded-box"
     aria-label="设置"
   >
     <header class="mb-5 flex items-center justify-between">
@@ -193,7 +193,7 @@
       </label>
 
       <label class="flex cursor-pointer items-center gap-3 rounded-box px-3 py-3 hover:bg-base-200/60">
-        <Sparkles size={18} class="text-primary/70" />
+        <Waypoints size={18} class="text-primary/70" />
         <span class="min-w-0 flex-1">
           <span class="block text-sm font-medium">语义搜索</span>
           <span class="block text-xs text-base-content/45">关键词结果不足时，使用余弦相似度补充</span>

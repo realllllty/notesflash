@@ -1,5 +1,11 @@
 import { characterNgrams, cosineSimilarity, makeSnippet, normalizeText } from './text';
-import { NativeHttpError, runtimeFetch } from './runtime-fetch';
+import {
+  markRuntimeTransportFailed,
+  NativeHttpError,
+  runtimeFetch,
+  runtimeTransportForResponse,
+  TransportProbeError
+} from './runtime-fetch';
 import type {
   ConnectionProfile,
   CreateNoteInput,
@@ -513,33 +519,108 @@ async function readWorkerPayload(response: Response, endpoint: string): Promise<
   try {
     return await readPayload(response);
   } catch (error) {
+    const transport = runtimeTransportForResponse(response);
+    if (transport) markRuntimeTransportFailed(endpoint, transport);
+    if (transport === 'native') {
+      throw mapWorkerNetworkError(new NativeHttpError(error), endpoint, 'response-body');
+    }
     throw mapWorkerNetworkError(error, endpoint);
   }
 }
 
-function mapWorkerNetworkError(error: unknown, endpoint: string): unknown {
+function mapWorkerNetworkError(
+  error: unknown,
+  endpoint: string,
+  phase: 'request' | 'response-body' = 'request'
+): unknown {
+  if (error instanceof TransportProbeError) {
+    const host = workerHost(endpoint);
+    const browserReason = safeNetworkReason(error.browserCause, 220);
+    const nativeReason = safeNetworkReason(error.nativeCause, 220);
+    return new ApiError(
+      `桌面端的两种网络通道都无法连接（${host}）。浏览器：${browserReason}；原生：${nativeReason}`,
+      0,
+      'DESKTOP_TRANSPORT_ERROR',
+      {
+        endpoint,
+        browserReason,
+        nativeReason,
+        transport: 'desktop-probe',
+        phase: 'health-probe'
+      }
+    );
+  }
   if (error instanceof NativeHttpError) {
     const host = workerHost(endpoint);
-    const reason = error.nativeCause instanceof Error
-      ? error.nativeCause.message
-      : String(error.nativeCause);
+    const reason = safeNetworkReason(error.nativeCause);
     return new ApiError(
-      `桌面原生网络请求失败（${host}）。请重试；如果问题持续，请把此错误截图发给开发者。`,
+      `桌面原生网络请求失败（${host}）：${reason}`,
       0,
       'NATIVE_HTTP_ERROR',
-      { endpoint, reason, transport: 'tauri-native' }
+      { endpoint, reason, transport: 'tauri-native', phase }
     );
   }
   if (!isNetworkFailure(error)) return error;
 
   const host = workerHost(endpoint);
-  const reason = error instanceof Error ? error.message : String(error);
+  const reason = safeNetworkReason(error, 220);
   return new ApiError(
-    `无法连接到 Cloudflare Worker（${host}）。请检查网络连接、Worker 地址，以及该 Worker 是否仍在运行。`,
+    `无法连接到 Cloudflare Worker（${host}）：${reason}`,
     0,
     'NETWORK_ERROR',
-    { endpoint, reason }
+    { endpoint, reason, transport: 'browser' }
   );
+}
+
+export function safeNetworkReason(cause: unknown, maxLength = 400): string {
+  let reason = extractNetworkReason(cause);
+  reason = reason
+    .replace(/\bhttps?:\/\/[^\s<>"']+/gi, (value) => sanitizeDiagnosticUrl(value))
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/Basic\s+[A-Za-z0-9+/=]+/gi, 'Basic [REDACTED]')
+    .replace(/([?&](?:token|access_token|refresh_token|code)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/\bNF-[A-Z0-9]+(?:-[A-Z0-9]+)+\b/gi, '[PAIRING_CODE_REDACTED]')
+    .replace(
+      /(["']?(?:token|accessToken|access_token|refresh_token|authorization|api[_-]?key|signature|secret|password|passwd|q|query)["']?\s*[:=]\s*)["']?[^,"'}&\s]+/gi,
+      '$1[REDACTED]'
+    )
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return reason.slice(0, maxLength) || '网络组件没有返回具体原因';
+}
+
+function sanitizeDiagnosticUrl(rawValue: string): string {
+  const trailingMatch = rawValue.match(/[)\]}>.,;!?]+$/);
+  const trailing = trailingMatch?.[0] ?? '';
+  const candidate = trailing ? rawValue.slice(0, -trailing.length) : rawValue;
+  try {
+    const url = new URL(candidate);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    return `${url.toString()}${trailing}`;
+  } catch {
+    return rawValue.replace(/[?#].*$/, '');
+  }
+}
+
+function extractNetworkReason(cause: unknown, depth = 0): string {
+  if (depth > 3) return String(cause);
+  if (cause instanceof Error) return cause.message || cause.name;
+  if (typeof cause === 'string') return cause;
+  if (cause && typeof cause === 'object') {
+    const record = cause as Record<string, unknown>;
+    const nested = record.message ?? record.error ?? record.cause;
+    if (nested !== undefined && nested !== cause) return extractNetworkReason(nested, depth + 1);
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return Object.prototype.toString.call(cause);
+    }
+  }
+  return cause === null || cause === undefined ? '' : String(cause);
 }
 
 function isNetworkFailure(error: unknown): boolean {

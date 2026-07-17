@@ -74,8 +74,8 @@
         <LoaderCircle size={15} class="animate-spin text-primary/70" />
       </span>
     {:else if semanticEnabled && value.trim()}
-      <span class="badge badge-ghost badge-sm hidden gap-1 border-base-content/8 bg-base-200/55 text-[10px] font-medium text-base-content/42 sm:inline-flex">
-        AI
+      <span class="badge badge-ghost badge-sm hidden gap-1 border-base-content/8 bg-base-200/55 text-[10px] font-medium tracking-wide text-base-content/42 sm:inline-flex">
+        语义
       </span>
     {/if}
 
@@ -128,8 +128,8 @@
 <style>
   .search-shell {
     box-shadow:
-      0 1px 2px color-mix(in oklab, var(--color-base-content) 4%, transparent),
-      0 10px 32px color-mix(in oklab, var(--color-base-content) 5%, transparent);
+      0 1px 1px color-mix(in oklab, var(--color-base-content) 3%, transparent),
+      0 6px 20px color-mix(in oklab, var(--color-base-content) 4%, transparent);
   }
 
   .draft-track {

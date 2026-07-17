@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Image as ImageIcon, Sparkles } from '@lucide/svelte';
+  import { Image as ImageIcon } from '@lucide/svelte';
   import { createEventDispatcher } from 'svelte';
   import { logicalNoteLines, parseNoteContent } from '../lib/note-content';
   import { formatRelativeTime } from '../lib/text';
@@ -48,8 +48,9 @@
       <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-base-content/38">
         <time>{formatRelativeTime(hit.note.updatedAt)}</time>
         {#if hit.matchType === 'semantic' || hit.matchType === 'both'}
-          <span class="inline-flex items-center gap-1 text-primary/62">
-            <Sparkles size={11} /> {hit.matchType === 'both' ? '关键词 + 语义' : '语义相关'}
+          <span class="semantic-tag inline-flex items-center gap-1.5 text-primary/72">
+            <span class="semantic-dot" aria-hidden="true"></span>
+            {hit.matchType === 'both' ? '关键词 + 语义' : '语义相关'}
           </span>
         {/if}
         {#if hit.note.images.length > 0}
@@ -102,19 +103,19 @@
   .note-card {
     border-radius: calc(var(--radius-box) * 0.72);
     background: transparent;
-    box-shadow: inset 0 -1px color-mix(in oklab, var(--color-base-content) 7%, transparent);
-    transition: box-shadow 120ms ease, background-color 120ms ease;
+    box-shadow: inset 0 -1px color-mix(in oklab, var(--color-base-content) 6%, transparent);
+    transition: box-shadow 150ms ease, background-color 150ms ease;
   }
 
   .note-card.selected {
-    background: color-mix(in oklab, var(--color-primary) 2.5%, transparent);
+    background: color-mix(in oklab, var(--color-primary) 4%, transparent);
     box-shadow:
-      inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 23%, transparent),
-      inset 0 -1px color-mix(in oklab, var(--color-base-content) 7%, transparent);
+      inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 26%, transparent),
+      inset 0 -1px color-mix(in oklab, var(--color-base-content) 6%, transparent);
   }
 
   .note-card:not(.selected):hover {
-    background: color-mix(in oklab, var(--color-base-200) 34%, transparent);
+    background: color-mix(in oklab, var(--color-base-200) 42%, transparent);
   }
 
   .note-card [role='button']:focus-visible {
@@ -127,6 +128,15 @@
     isolation: isolate;
     overflow: clip;
     border-radius: 0.35rem;
+  }
+
+  .semantic-dot {
+    width: 5px;
+    height: 5px;
+    flex: none;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-primary) 72%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 13%, transparent);
   }
 
   .note-image-content :global(.mt-3) {

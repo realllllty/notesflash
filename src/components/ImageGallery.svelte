@@ -28,7 +28,7 @@
 
 {#if active}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-neutral/80 p-4 backdrop-blur-sm"
+    class="nf-overlay-in fixed inset-0 z-50 flex items-center justify-center bg-neutral/80 p-4 backdrop-blur-sm"
     role="presentation"
     on:click={() => (active = null)}
     on:keydown={(event) => event.key === 'Escape' && (active = null)}
