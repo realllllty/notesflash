@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Image as ImageIcon, Sparkles } from '@lucide/svelte';
   import { createEventDispatcher } from 'svelte';
-  import { parseNoteContent } from '../lib/note-content';
+  import { logicalNoteLines, parseNoteContent } from '../lib/note-content';
   import { formatRelativeTime } from '../lib/text';
   import type { SearchHit } from '../lib/types';
   import HighlightedText from './HighlightedText.svelte';
@@ -11,10 +11,15 @@
   export let query = '';
   export let selected = false;
   export let optionIndex = 0;
+  export let activeRawLineIndex: number | null = null;
+  export let activeTitle = false;
 
-  const dispatch = createEventDispatcher<{ edit: void }>();
+  const dispatch = createEventDispatcher<{
+    edit: { source: 'title' } | { source: 'body'; rawLineIndex: number };
+  }>();
 
   $: contentBlocks = parseNoteContent(hit.note.body, hit.note.images);
+  $: contentLines = logicalNoteLines(contentBlocks);
 </script>
 
 <article
@@ -23,14 +28,19 @@
   class="note-card scroll-mt-24 px-3 py-4 sm:px-4"
   aria-current={selected ? 'true' : undefined}
 >
-  <header class="mb-2 flex items-start gap-3">
+  <header
+    id={`note-${hit.note.id}-title`}
+    class={`note-card-header mb-2 flex items-start gap-3 ${activeTitle ? 'current-title-match' : ''}`}
+    aria-current={activeTitle ? 'true' : undefined}
+  >
     <div
       class="min-w-0 flex-1 cursor-text text-left outline-none"
       role="button"
       tabindex="0"
       aria-label={`编辑 ${hit.note.title}`}
-      on:click={() => dispatch('edit')}
-      on:keydown={(event) => (event.key === 'Enter' || event.key === ' ') && dispatch('edit')}
+      on:click={() => dispatch('edit', { source: 'title' })}
+      on:keydown={(event) =>
+        (event.key === 'Enter' || event.key === ' ') && dispatch('edit', { source: 'title' })}
     >
       <h2 class="break-words text-[15px] font-semibold leading-6 tracking-[-0.01em]">
         <HighlightedText text={hit.note.title || '无标题'} {query} />
@@ -51,21 +61,38 @@
     </div>
   </header>
 
-  <div>
-    {#each contentBlocks as block (block.key)}
-      {#if block.type === 'text'}
+  <div class="note-lines">
+    {#each contentLines as line (line.rawLineIndex)}
+      {#if line.type === 'text'}
         <div
-          class="note-prose min-h-6 cursor-text text-[14px] text-base-content/72 outline-none"
+          id={`note-${hit.note.id}-line-${line.rawLineIndex}`}
+          data-body-line-index={line.rawLineIndex}
+          class={`note-line cursor-text text-base-content/72 outline-none ${line.rawLineIndex === activeRawLineIndex ? 'current-match' : ''}`}
           role="button"
           tabindex="0"
-          aria-label={`编辑 ${hit.note.title} 的正文`}
-          on:click={() => dispatch('edit')}
-          on:keydown={(event) => (event.key === 'Enter' || event.key === ' ') && dispatch('edit')}
+          aria-current={line.rawLineIndex === activeRawLineIndex ? 'true' : undefined}
+          aria-label={`编辑 ${hit.note.title} 的第 ${line.displayLineNumber} 行`}
+          on:click={() => dispatch('edit', { source: 'body', rawLineIndex: line.rawLineIndex })}
+          on:keydown={(event) =>
+            (event.key === 'Enter' || event.key === ' ') &&
+            dispatch('edit', { source: 'body', rawLineIndex: line.rawLineIndex })}
         >
-          {#if block.text}<HighlightedText text={block.text} {query} />{/if}
+          <span class="note-line-number" aria-hidden="true">{line.displayLineNumber}</span>
+          <div class="note-line-content">
+            {#if line.text}<HighlightedText text={line.text} {query} />{/if}
+          </div>
         </div>
-      {:else if block.type === 'image'}
-        <ImageGallery images={[block.image]} />
+      {:else}
+        <div
+          id={`note-${hit.note.id}-line-${line.rawLineIndex}`}
+          data-body-line-index={line.rawLineIndex}
+          class={`note-line note-image-line ${line.rawLineIndex === activeRawLineIndex ? 'current-match' : ''}`}
+        >
+          <span class="note-line-number" aria-hidden="true">{line.displayLineNumber}</span>
+          <div class="note-line-content note-image-content">
+            <ImageGallery images={[line.image]} />
+          </div>
+        </div>
       {/if}
     {/each}
   </div>
@@ -93,5 +120,16 @@
   .note-card [role='button']:focus-visible {
     border-radius: 0.3rem;
     background: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+  }
+
+  .note-card-header {
+    position: relative;
+    isolation: isolate;
+    overflow: clip;
+    border-radius: 0.35rem;
+  }
+
+  .note-image-content :global(.mt-3) {
+    margin-top: 0;
   }
 </style>

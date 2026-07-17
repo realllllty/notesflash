@@ -1,12 +1,17 @@
 <script lang="ts">
   import { AlertTriangle, Check, LoaderCircle, Trash2, X } from '@lucide/svelte';
-  import { onMount } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import {
     contentImages,
+    ensureEditableTextBlocks,
+    nearestTextPositionForRawLine,
+    numberNoteContentBlocks,
     parseNoteContent,
     serializeNoteContent,
+    splitTextForBlockInsertion,
     type NoteContentBlock
   } from '../lib/note-content';
+  import { isImeComposing } from '../lib/text';
   import type { ImageAsset, Note, UpdateNoteInput } from '../lib/types';
 
   export let note: Note;
@@ -14,9 +19,13 @@
   export let deleteNote: (note: Note) => Promise<void>;
   export let uploadImage: (file: File) => Promise<ImageAsset>;
   export let close: () => void;
+  export let activeRawLineIndex: number | null = null;
+  export let activeTitle = false;
+
+  const dispatch = createEventDispatcher<{ contentchange: void }>();
 
   let title = note.title;
-  let blocks = parseNoteContent(note.body, note.images);
+  let blocks = ensureEditableTextBlocks(parseNoteContent(note.body, note.images));
   let currentVersion = note.version;
   let activeId = note.id;
   let status: 'saved' | 'dirty' | 'saving' | 'error' = 'saved';
@@ -27,8 +36,10 @@
   let savePromise: Promise<boolean> | null = null;
   let uploadPromise: Promise<boolean> | null = null;
   let editorElement: HTMLElement;
+  let titleInput: HTMLTextAreaElement;
 
   $: if (note.id !== activeId) reset(note);
+  $: numberedBlocks = numberNoteContentBlocks(blocks);
 
   onMount(() => {
     focusBody();
@@ -49,7 +60,7 @@
   function reset(next: Note): void {
     activeId = next.id;
     title = next.title;
-    blocks = parseNoteContent(next.body, next.images);
+    blocks = ensureEditableTextBlocks(parseNoteContent(next.body, next.images));
     currentVersion = next.version;
     editRevision = 0;
     savePromise = null;
@@ -58,6 +69,7 @@
   }
 
   function markDirty(): void {
+    dispatch('contentchange');
     editRevision += 1;
     status = 'dirty';
     errorMessage = '';
@@ -74,6 +86,34 @@
     window.setTimeout(() => {
       const firstTextarea = editorElement?.querySelector<HTMLTextAreaElement>('textarea[data-note-body]');
       firstTextarea?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  export function focusTitle(): void {
+    window.setTimeout(() => {
+      titleInput?.focus({ preventScroll: true });
+      titleInput?.setSelectionRange(0, titleInput.value.length);
+    }, 0);
+  }
+
+  export function focusLogicalLine(rawLineIndex: number): void {
+    window.setTimeout(() => {
+      const position = nearestTextPositionForRawLine(blocks, rawLineIndex);
+      if (!position) {
+        focusTitle();
+        return;
+      }
+
+      const textarea = [...(editorElement?.querySelectorAll<HTMLTextAreaElement>('textarea[data-block-key]') ?? [])]
+        .find((candidate) => candidate.dataset.blockKey === position.blockKey);
+      if (!textarea) return;
+
+      const caret = position.rawLineIndex < rawLineIndex ? position.endOffset : position.startOffset;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(caret, caret);
+      editorElement
+        ?.querySelector<HTMLElement>(`[data-body-line-index="${position.rawLineIndex}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
     }, 0);
   }
 
@@ -122,9 +162,20 @@
     const textarea = event.currentTarget as HTMLTextAreaElement;
     blocks = blocks.map((block) =>
       block.key === blockKey && block.type === 'text'
-        ? { ...block, text: textarea.value }
+        ? {
+            ...block,
+            text: textarea.value,
+            transient: block.transient && textarea.value === '' ? true : undefined
+          }
         : block
     );
+    markDirty();
+  }
+
+  function updateTitle(event: Event): void {
+    const textarea = event.currentTarget as HTMLTextAreaElement;
+    title = textarea.value.replace(/[\r\n]+/g, ' ');
+    if (textarea.value !== title) textarea.value = title;
     markDirty();
   }
 
@@ -140,8 +191,11 @@
 
     const selectionStart = textarea.selectionStart ?? block.text.length;
     const selectionEnd = textarea.selectionEnd ?? selectionStart;
-    const before = block.text.slice(0, selectionStart);
-    const after = block.text.slice(selectionEnd);
+    const { before, after } = splitTextForBlockInsertion(
+      block.text,
+      selectionStart,
+      selectionEnd
+    );
     uploading = true;
     errorMessage = '';
 
@@ -150,17 +204,33 @@
         const uploaded: ImageAsset[] = [];
         for (const file of files) uploaded.push(await uploadImage(file));
 
+        const leading: Extract<NoteContentBlock, { type: 'text' }> = {
+          key: crypto.randomUUID(),
+          type: 'text',
+          text: before,
+          transient: before === '' ? true : undefined
+        };
+        const trailing: Extract<NoteContentBlock, { type: 'text' }> = {
+          key: crypto.randomUUID(),
+          type: 'text',
+          text: after,
+          transient: after === '' ? true : undefined
+        };
         const inserted: NoteContentBlock[] = [
-          { key: crypto.randomUUID(), type: 'text', text: before }
+          leading,
+          ...uploaded.map((image) => ({
+            key: crypto.randomUUID(),
+            type: 'image' as const,
+            image
+          })),
+          trailing
         ];
-        for (const image of uploaded) {
-          inserted.push({ key: crypto.randomUUID(), type: 'image', image });
-          inserted.push({ key: crypto.randomUUID(), type: 'text', text: '' });
-        }
-        const trailing = inserted[inserted.length - 1];
-        if (trailing.type === 'text') trailing.text = after;
 
-        blocks = [...blocks.slice(0, blockIndex), ...inserted, ...blocks.slice(blockIndex + 1)];
+        blocks = ensureEditableTextBlocks([
+          ...blocks.slice(0, blockIndex),
+          ...inserted,
+          ...blocks.slice(blockIndex + 1)
+        ]);
         markDirty();
         const trailingKey = trailing.key;
         window.setTimeout(() => {
@@ -193,11 +263,20 @@
       const merged: NoteContentBlock = {
         key: previous.key,
         type: 'text',
-        text: `${previous.text}${separator}${next.text}`
+        text: `${previous.text}${separator}${next.text}`,
+        transient: previous.transient && next.transient ? true : undefined
       };
       blocks = [...blocks.slice(0, index - 1), merged, ...blocks.slice(index + 2)];
     } else {
       blocks = blocks.filter((block) => block.key !== blockKey);
+    }
+    if (blocks.length === 0) {
+      blocks = [{ key: crypto.randomUUID(), type: 'text', text: '' }];
+    }
+    if (blocks.every((block) => block.type === 'text' && block.transient && block.text === '')) {
+      blocks = [{ key: crypto.randomUUID(), type: 'text', text: '' }];
+    } else {
+      blocks = ensureEditableTextBlocks(blocks);
     }
     markDirty();
   }
@@ -237,28 +316,39 @@
     event.preventDefault();
     void closeEditor();
   }
+
+  function handleTitleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !isImeComposing(event)) {
+      event.preventDefault();
+      focusBody();
+      return;
+    }
+    handleEditorKeydown(event);
+  }
 </script>
 
 <section bind:this={editorElement} class="note-editor relative scroll-mt-24 px-3 py-4 sm:px-4">
-  <button
-    type="button"
-    class="btn btn-ghost btn-xs absolute right-3 top-4 z-10 gap-1 text-error/75 sm:right-4"
-    on:click={requestDelete}
+  <header
+    id={`note-${note.id}-title`}
+    class={`note-editor-header mb-2 flex items-start gap-3 ${activeTitle ? 'current-title-match' : ''}`}
+    aria-current={activeTitle ? 'true' : undefined}
   >
-    <Trash2 size={13} /> 删除
-  </button>
-
-  <header class="mb-2 flex items-start gap-3 pr-14">
     <div class="min-w-0 flex-1">
-      <input
-        class="note-title-input block w-full bg-transparent text-[15px] font-semibold leading-6 tracking-[-0.01em] outline-none placeholder:text-base-content/35"
-        bind:value={title}
-        placeholder="标题"
-        aria-label="笔记标题"
-        on:input={markDirty}
-        on:keydown={handleEditorKeydown}
-      />
-      <div class="mt-1 flex items-center gap-2 text-[11px] text-base-content/42">
+      <div class="title-editor">
+        <div class="title-input-mirror" aria-hidden="true">{title || '标题'}</div>
+        <textarea
+          bind:this={titleInput}
+          class="note-title-input block w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none placeholder:text-base-content/35"
+          value={title}
+          rows="1"
+          wrap="soft"
+          placeholder="标题"
+          aria-label="笔记标题"
+          on:input={updateTitle}
+          on:keydown={handleTitleKeydown}
+        ></textarea>
+      </div>
+      <div class="mt-1 flex items-center gap-2 pr-14 text-[11px] text-base-content/42">
         {#if status === 'saving' || uploading}
           <span class="inline-flex items-center gap-1"><LoaderCircle size={12} class="animate-spin" /> {uploading ? '正在粘贴图片' : '保存中'}</span>
         {:else if status === 'error'}
@@ -268,40 +358,72 @@
         {/if}
       </div>
     </div>
+    <button
+      type="button"
+      class="btn btn-ghost btn-xs absolute bottom-0 right-0 z-10 gap-1 text-error/75"
+      on:click={requestDelete}
+    >
+      <Trash2 size={13} /> 删除
+    </button>
   </header>
 
-  <div class="text-[14px] leading-7 text-base-content/78">
-    {#each blocks as block (block.key)}
-      {#if block.type === 'text'}
-        <textarea
-          data-note-body
-          data-block-key={block.key}
-          value={block.text}
-          class="note-body-input block min-h-6 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[14px] leading-[1.68] outline-none placeholder:text-base-content/30 focus:outline-none"
-          placeholder={blocks.length === 1 ? '写下正文，可直接粘贴图片…' : ''}
-          aria-label="笔记正文"
-          readonly={uploading}
-          on:input={(event) => updateText(block.key, event)}
-          on:paste={(event) => void pasteImages(event, block.key)}
-          on:keydown={handleEditorKeydown}
-        ></textarea>
+  <div class="note-lines text-[14px] text-base-content/78">
+    {#each numberedBlocks as numbered (numbered.block.key)}
+      {#if numbered.type === 'text'}
+        <div class="numbered-textarea">
+          <div class="textarea-mirror" aria-hidden="true">
+            {#each numbered.lines as line (line.rawLineIndex)}
+              <div
+                id={`note-${note.id}-line-${line.rawLineIndex}`}
+                data-body-line-index={line.rawLineIndex}
+                class={`note-line ${line.rawLineIndex === activeRawLineIndex ? 'current-match' : ''}`}
+                aria-current={line.rawLineIndex === activeRawLineIndex ? 'true' : undefined}
+              >
+                <span class="note-line-number">{line.displayLineNumber}</span>
+                <div class="note-line-content textarea-mirror-text">{line.text}</div>
+              </div>
+            {/each}
+          </div>
+          <textarea
+            data-note-body
+            data-block-key={numbered.block.key}
+            value={numbered.block.text}
+            class="note-body-input block resize-none overflow-hidden border-0 bg-transparent p-0 text-[14px] outline-none placeholder:text-base-content/30 focus:outline-none"
+            placeholder={blocks.length === 1 ? '写下正文，可直接粘贴图片…' : ''}
+            aria-label="笔记正文"
+            readonly={uploading}
+            wrap="soft"
+            on:input={(event) => updateText(numbered.block.key, event)}
+            on:paste={(event) => void pasteImages(event, numbered.block.key)}
+            on:keydown={handleEditorKeydown}
+          ></textarea>
+        </div>
       {:else}
-        <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <figure class="group relative overflow-hidden rounded-box border border-base-300 bg-base-200">
-            <img
-              src={block.image.url}
-              alt={block.image.name}
-              class="aspect-[4/3] h-full w-full object-cover"
-            />
-            <button
-              type="button"
-              class="btn btn-circle btn-xs absolute right-2 top-2 border-0 bg-base-100/90 opacity-70 shadow-sm transition hover:opacity-100"
-              aria-label={`移除图片 ${block.image.name}`}
-              on:click={() => removeImage(block.key)}
-            >
-              <X size={13} />
-            </button>
-          </figure>
+        <div
+          id={`note-${note.id}-line-${numbered.line.rawLineIndex}`}
+          data-body-line-index={numbered.line.rawLineIndex}
+          class={`note-line note-image-line ${numbered.line.rawLineIndex === activeRawLineIndex ? 'current-match' : ''}`}
+        >
+          <span class="note-line-number" aria-hidden="true">{numbered.line.displayLineNumber}</span>
+          <div class="note-line-content note-image-content">
+            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <figure class="group relative overflow-hidden rounded-box border border-base-300 bg-base-200">
+                <img
+                  src={numbered.block.image.url}
+                  alt={numbered.block.image.name}
+                  class="aspect-[4/3] h-full w-full object-cover"
+                />
+                <button
+                  type="button"
+                  class="btn btn-circle btn-xs absolute right-2 top-2 border-0 bg-base-100/90 opacity-70 shadow-sm transition hover:opacity-100"
+                  aria-label={`移除图片 ${numbered.block.image.name}`}
+                  on:click={() => removeImage(numbered.block.key)}
+                >
+                  <X size={13} />
+                </button>
+              </figure>
+            </div>
+          </div>
         </div>
       {/if}
     {/each}
@@ -321,17 +443,74 @@
   }
 
   .note-title-input {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    margin: 0;
     font-size: 15px;
     font-weight: 600;
     line-height: 24px;
     letter-spacing: -0.01em;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .title-editor {
+    position: relative;
+    min-width: 0;
+    min-height: 24px;
+  }
+
+  .title-input-mirror {
+    min-height: 24px;
+    color: transparent;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 24px;
+    letter-spacing: -0.01em;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+    pointer-events: none;
   }
 
   .note-body-input {
-    field-sizing: content;
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
     font-size: 14px;
     font-weight: 400;
     line-height: 24px;
-    min-height: 24px;
+    letter-spacing: normal;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    tab-size: 4;
+  }
+
+  .numbered-textarea {
+    position: relative;
+    min-width: 0;
+    min-height: var(--note-line-height);
+  }
+
+  .textarea-mirror {
+    min-width: 0;
+    pointer-events: none;
+  }
+
+  .textarea-mirror-text {
+    visibility: hidden;
+  }
+
+  .note-editor-header {
+    position: relative;
+    isolation: isolate;
+    overflow: clip;
+    border-radius: 0.35rem;
   }
 </style>

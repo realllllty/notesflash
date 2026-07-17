@@ -4,12 +4,13 @@
 
   export let query = '';
   export let selected = false;
+  export let enterCreates = false;
 
   $: draft = parseQuickNoteInput(query);
 </script>
 
 <button
-  id="search-option-0"
+  id="quick-create-option"
   type="button"
   aria-current={selected ? 'true' : undefined}
   class:selected
@@ -30,7 +31,7 @@
     </span>
   </span>
   <span class="hidden items-center gap-1 text-[10px] text-base-content/32 group-hover:flex sm:flex">
-    <CornerDownLeft size={13} /> Enter
+    {#if enterCreates}<CornerDownLeft size={13} /> Enter{:else}点击创建{/if}
   </span>
 </button>
 

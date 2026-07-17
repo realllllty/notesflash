@@ -1,5 +1,18 @@
 <script lang="ts">
-  import { Check, Cloud, Command, Copy, KeyRound, LoaderCircle, LogOut, Moon, Sparkles, X } from '@lucide/svelte';
+  import {
+    Check,
+    Cloud,
+    Command,
+    Copy,
+    KeyRound,
+    LoaderCircle,
+    LogOut,
+    Moon,
+    PencilLine,
+    RefreshCw,
+    Sparkles,
+    X
+  } from '@lucide/svelte';
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { copyText } from '../lib/clipboard';
   import type { PairingCode, SortMode } from '../lib/types';
@@ -9,8 +22,15 @@
   export let semanticEnabled = true;
   export let demoMode = false;
   export let endpoint = '';
+  export let connectionStatus: 'checking' | 'online' | 'unreachable' | 'auth-invalid' = 'checking';
+  export let updateEndpoint: ((endpoint: string) => Promise<void>) | undefined = undefined;
+  export let retryConnection: (() => Promise<void>) | undefined = undefined;
   export let createPairingCode: (() => Promise<PairingCode>) | undefined = undefined;
 
+  let endpointDraft = '';
+  let endpointEditing = false;
+  let connectionActionLoading = false;
+  let connectionActionError = '';
   let pairingCode: PairingCode | null = null;
   let pairingLoading = false;
   let pairingError = '';
@@ -30,6 +50,63 @@
 
   function setSort(event: Event): void {
     dispatch('sortchange', (event.currentTarget as HTMLSelectElement).value as SortMode);
+  }
+
+  function beginEndpointRepair(): void {
+    endpointDraft = endpoint;
+    endpointEditing = true;
+    connectionActionError = '';
+  }
+
+  function cancelEndpointRepair(): void {
+    endpointDraft = endpoint;
+    endpointEditing = false;
+    connectionActionError = '';
+  }
+
+  function normalizedEndpoint(value: string): string {
+    const candidate = value.trim().replace(/\/+$/, '');
+    let parsed: URL;
+
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      throw new Error('请输入完整的 Worker 地址，例如 https://example.workers.dev');
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('Worker 地址必须以 http:// 或 https:// 开头');
+    }
+
+    return candidate;
+  }
+
+  async function handleRetryConnection(): Promise<void> {
+    if (!retryConnection || connectionActionLoading) return;
+    connectionActionLoading = true;
+    connectionActionError = '';
+    try {
+      await retryConnection();
+    } catch (error) {
+      connectionActionError = error instanceof Error ? error.message : '仍然无法连接，请检查 Worker 地址。';
+    } finally {
+      connectionActionLoading = false;
+    }
+  }
+
+  async function saveEndpoint(): Promise<void> {
+    if (!updateEndpoint || connectionActionLoading) return;
+    connectionActionLoading = true;
+    connectionActionError = '';
+    try {
+      const nextEndpoint = normalizedEndpoint(endpointDraft);
+      await updateEndpoint(nextEndpoint);
+      endpointEditing = false;
+    } catch (error) {
+      connectionActionError = error instanceof Error ? error.message : '无法保存 Worker 地址，请稍后重试。';
+    } finally {
+      connectionActionLoading = false;
+    }
   }
 
   async function generatePairingCode(): Promise<void> {
@@ -65,6 +142,24 @@
   }
 
   $: pairingExpired = pairingCode !== null && pairingCode.expiresAt <= now;
+  $: connectionTitle = demoMode
+    ? '演示模式'
+    : connectionStatus === 'online'
+      ? 'Cloudflare 已连接'
+      : connectionStatus === 'checking'
+        ? '正在检查 Cloudflare 连接'
+        : connectionStatus === 'auth-invalid'
+          ? '设备授权已失效'
+          : '无法连接 Cloudflare';
+  $: connectionDescription = demoMode
+    ? '所有内容仅保存在当前页面内存，刷新后消失。'
+    : connectionStatus === 'online'
+      ? '设备凭据有效，正在使用下面的 Worker。'
+      : connectionStatus === 'checking'
+        ? '正在验证 Worker 地址和当前设备凭据。'
+        : connectionStatus === 'auth-invalid'
+          ? 'Worker 可以访问，但不再接受当前设备凭据。请核对地址；地址正确时需要重新配对。'
+          : '当前无法访问这个 Worker。请检查网络，或修复 Worker 地址后重试。';
 </script>
 
 {#if open}
@@ -127,16 +222,91 @@
 
     <div class="divider my-4"></div>
 
-    <div class="rounded-box bg-base-200/55 p-3">
-      <div class="flex items-center gap-2 text-xs font-medium">
-        <Cloud size={14} /> {demoMode ? '演示模式' : 'Cloudflare 已连接'}
+    <div class="rounded-box bg-base-200/55 p-3" aria-live="polite">
+      <div class="flex items-start gap-2">
+        {#if !demoMode && connectionStatus === 'checking'}
+          <LoaderCircle size={14} class="mt-0.5 shrink-0 animate-spin text-base-content/55" />
+        {:else}
+          <Cloud
+            size={14}
+            class={`mt-0.5 shrink-0 ${!demoMode && connectionStatus !== 'online' ? 'opacity-55' : ''}`}
+          />
+        {/if}
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-medium">{connectionTitle}</p>
+          <p class="mt-1 text-[11px] leading-5 text-base-content/50">{connectionDescription}</p>
+          {#if !demoMode}
+            <p class="mt-1 break-all text-[11px] leading-5 text-base-content/38">{endpoint}</p>
+          {/if}
+        </div>
       </div>
-      <p class="mt-1 break-all text-[11px] leading-5 text-base-content/45">
-        {demoMode ? '所有内容仅保存在当前页面内存，刷新后消失。' : endpoint}
-      </p>
+
+      {#if !demoMode && endpointEditing}
+        <form class="mt-3" on:submit|preventDefault={saveEndpoint}>
+          <label class="text-[11px] font-medium text-base-content/55" for="worker-endpoint-repair">
+            Worker 地址
+          </label>
+          <input
+            id="worker-endpoint-repair"
+            class="input input-bordered input-sm mt-1 w-full"
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            bind:value={endpointDraft}
+            placeholder="https://example.workers.dev"
+            disabled={connectionActionLoading}
+          />
+          <div class="mt-2 flex justify-end gap-2">
+            <button
+              class="btn btn-ghost btn-sm"
+              type="button"
+              disabled={connectionActionLoading}
+              on:click={cancelEndpointRepair}
+            >
+              取消
+            </button>
+            <button
+              class="btn btn-primary btn-sm"
+              type="submit"
+              disabled={connectionActionLoading || !endpointDraft.trim() || !updateEndpoint}
+            >
+              {#if connectionActionLoading}<LoaderCircle size={14} class="animate-spin" />{/if}
+              保存并验证
+            </button>
+          </div>
+        </form>
+      {:else if !demoMode && connectionStatus !== 'online'}
+        <div class="mt-3 flex flex-wrap gap-2">
+          {#if retryConnection}
+            <button
+              class="btn btn-outline btn-sm gap-1.5"
+              type="button"
+              disabled={connectionActionLoading || connectionStatus === 'checking'}
+              on:click={handleRetryConnection}
+            >
+              {#if connectionActionLoading}
+                <LoaderCircle size={14} class="animate-spin" />
+              {:else}
+                <RefreshCw size={14} />
+              {/if}
+              重试连接
+            </button>
+          {/if}
+          {#if updateEndpoint}
+            <button class="btn btn-ghost btn-sm gap-1.5" type="button" on:click={beginEndpointRepair}>
+              <PencilLine size={14} />
+              修复 Worker 地址
+            </button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if connectionActionError}
+        <p class="mt-2 text-xs text-error" role="alert">{connectionActionError}</p>
+      {/if}
     </div>
 
-    {#if !demoMode && createPairingCode}
+    {#if !demoMode && connectionStatus === 'online' && createPairingCode}
       <section class="mt-3 rounded-box border border-base-300/70 p-3" aria-labelledby="pairing-code-title">
         <div class="flex items-start gap-3">
           <KeyRound size={17} class="mt-0.5 shrink-0 text-primary/75" />

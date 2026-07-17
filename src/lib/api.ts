@@ -49,13 +49,13 @@ export async function pairDevice(
   deviceName: string
 ): Promise<ConnectionProfile> {
   const normalizedEndpoint = normalizeEndpoint(endpoint);
-  const response = await fetch(`${normalizedEndpoint}/api/devices/pair`, {
+  const response = await fetchWorker(normalizedEndpoint, '/api/devices/pair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ code: code.trim(), deviceName, platform: clientPlatform() })
   });
 
-  const payload = await readPayload(response);
+  const payload = await readWorkerPayload(response, normalizedEndpoint);
   if (!response.ok) throw toApiError(response, payload);
 
   const result = payload as Partial<PairingResponse> & { accessToken?: string };
@@ -166,12 +166,13 @@ export class RemoteNotesClient implements NotesClient {
     headers.set('authorization', `Bearer ${this.connection.token}`);
     headers.set('accept', 'application/json');
 
-    const response = await fetch(`${this.connection.endpoint}${path}`, {
+    const endpoint = normalizeEndpoint(this.connection.endpoint);
+    const response = await fetchWorker(endpoint, path, {
       ...init,
       headers,
       cache: 'no-store'
     });
-    const payload = await readPayload(response);
+    const payload = await readWorkerPayload(response, endpoint);
     if (!response.ok) throw toApiError(response, payload);
     return payload;
   }
@@ -184,7 +185,11 @@ export class RemoteNotesClient implements NotesClient {
       return {
         note,
         matchType: value.matchType === 'both' ? 'both' : fallbackType,
-        snippet: typeof value.snippet === 'string' ? value.snippet : makeSnippet(note.title, note.body, ''),
+        snippet: typeof value.snippet === 'string'
+          ? value.snippet
+          : fallbackType === 'semantic'
+            ? ''
+            : makeSnippet(note.title, note.body, ''),
         score: numberValue(value.score, 1 / (index + 1))
       };
     });
@@ -384,7 +389,7 @@ function demoNotes(): Note[] {
     {
       id: crypto.randomUUID(),
       title: '快捷检索的交互约定',
-      body: 'Command + Shift + Space 唤起窗口。搜索框自动聚焦。\n方向键切换结果，Tab 复制命中行并进入编辑。\n搜索结果第一项始终是快速创建。\nEnter 打开当前选中笔记。',
+      body: 'Command + Shift + Space 唤起窗口。搜索框自动聚焦。\nEnter 或向下键逐行跳到下一个命中，向上键回到上一个。\n同一篇笔记的多处命中会逐行循环，高光不会改变页面尺寸。\nTab 复制当前逻辑行并直接进入对应位置编辑。',
       images: [],
       version: 1,
       createdAt: now - 86400000 * 5,
@@ -473,10 +478,70 @@ function createDemoPairingCode(): string {
   return `NF-${characters.slice(0, 5).join('')}-${characters.slice(5).join('')}`;
 }
 
-function normalizeEndpoint(value: string): string {
-  const endpoint = value.trim().replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(endpoint)) throw new ApiError('Worker 地址必须以 https:// 开头。', 400);
-  return endpoint;
+export function normalizeEndpoint(value: string): string {
+  const candidate = value.trim();
+  let url: URL;
+
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new ApiError('Worker 地址无效，请填写完整的 https:// 地址。', 400, 'INVALID_ENDPOINT');
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new ApiError('Worker 地址必须以 https:// 开头。', 400, 'INVALID_ENDPOINT');
+  }
+  if (url.username || url.password) {
+    throw new ApiError('Worker 地址不能包含用户名或密码。', 400, 'INVALID_ENDPOINT');
+  }
+
+  url.search = '';
+  url.hash = '';
+  url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+  return url.pathname === '/' ? url.origin : `${url.origin}${url.pathname}`;
+}
+
+async function fetchWorker(endpoint: string, path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${endpoint}${path}`, init);
+  } catch (error) {
+    throw mapWorkerNetworkError(error, endpoint);
+  }
+}
+
+async function readWorkerPayload(response: Response, endpoint: string): Promise<unknown> {
+  try {
+    return await readPayload(response);
+  } catch (error) {
+    throw mapWorkerNetworkError(error, endpoint);
+  }
+}
+
+function mapWorkerNetworkError(error: unknown, endpoint: string): unknown {
+  if (!isNetworkFailure(error)) return error;
+
+  const host = workerHost(endpoint);
+  const reason = error instanceof Error ? error.message : String(error);
+  return new ApiError(
+    `无法连接到 Cloudflare Worker（${host}）。请检查网络连接、Worker 地址，以及该 Worker 是否仍在运行。`,
+    0,
+    'NETWORK_ERROR',
+    { endpoint, reason }
+  );
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /load failed|failed to fetch|network(?: request)? (?:failed|error)/i.test(message);
+}
+
+function workerHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
 }
 
 function clientPlatform(): string {

@@ -6,7 +6,7 @@
   export let value = '';
   export let semanticSearching = false;
   export let semanticEnabled = true;
-  export let selectedIndex = 0;
+  export let activeDescendant: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{
     input: string;
@@ -61,7 +61,7 @@
       placeholder="输入标题，按空格继续写正文…"
       aria-label="搜索笔记或快速创建笔记"
       aria-describedby="quick-draft-hint"
-      aria-activedescendant={`search-option-${selectedIndex}`}
+      aria-activedescendant={activeDescendant}
       value={value}
       on:input={update}
       on:compositionstart={() => (composing = true)}

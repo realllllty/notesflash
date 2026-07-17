@@ -1,6 +1,6 @@
 [package]
 name = "notesflash"
-version = "0.1.0"
+version = "0.1.1"
 description = "A compact, search-first notes client"
 authors = ["NotesFlash contributors"]
 edition = "2021"

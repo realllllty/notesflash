@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CloudOff, Command, LoaderCircle, SearchX, Sparkles } from '@lucide/svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import ConnectPanel from './components/ConnectPanel.svelte';
   import NoteCard from './components/NoteCard.svelte';
   import NoteEditor from './components/NoteEditor.svelte';
@@ -12,10 +12,19 @@
     clearConnection,
     DemoNotesClient,
     loadConnection,
+    normalizeEndpoint,
     RemoteNotesClient,
     saveConnection
   } from './lib/api';
   import { copyText } from './lib/clipboard';
+  import {
+    activeSearchLineTarget,
+    collectSearchLineTargets,
+    moveActiveMatchKey,
+    retainActiveMatchKey,
+    type SearchLineTarget
+  } from './lib/search-lines';
+  import { canCreateFromCompletedSearch } from './lib/search-state';
   import { isKeyboardOptionSelected, nextKeyboardSelection } from './lib/selection';
   import { firstMatchingLine, isImeComposing, mergeSearchHits, normalizeText, parseQuickNoteInput } from './lib/text';
   import type {
@@ -28,8 +37,12 @@
     UpdateNoteInput
   } from './lib/types';
 
+  type ConnectionStatus = 'checking' | 'online' | 'unreachable' | 'auth-invalid';
+  type EditorFocusTarget = { source: 'title' } | { source: 'body'; rawLineIndex: number };
+
   let connection: ConnectionProfile | null = loadConnection();
   let client: NotesClient | null = connection ? new RemoteNotesClient(connection) : null;
+  let connectionStatus: ConnectionStatus = 'checking';
   let demoMode = false;
   let notes: Note[] = [];
   let lexicalHits: SearchHit[] = [];
@@ -41,6 +54,9 @@
   let querySaving = false;
   let selectedIndex = 0;
   let keyboardSelectionVisible = false;
+  let searchTargets: SearchLineTarget[] = [];
+  let activeMatchKey: string | null = null;
+  let activeMatchTarget: SearchLineTarget | null = null;
   let editingId: string | null = null;
   let loading = false;
   let semanticSearching = false;
@@ -55,11 +71,19 @@
   let semanticTimer: number | undefined;
   let searchGeneration = 0;
   let lexicalSettledGeneration = 0;
+  let lexicalSuccessfulGeneration = 0;
+  let semanticSettledGeneration = 0;
+  let semanticSuccessfulGeneration = 0;
   let pendingSemanticGeneration = 0;
   let pendingSemanticHits: SearchHit[] = [];
   let notesGeneration = 0;
   let lastNotesRefreshAt = 0;
-  let activeEditor: { flush: () => Promise<boolean>; focusBody: () => void } | null = null;
+  let activeEditor: {
+    flush: () => Promise<boolean>;
+    focusBody: () => void;
+    focusTitle: () => void;
+    focusLogicalLine: (rawLineIndex: number) => void;
+  } | null = null;
   let queryTransition: Promise<void> | null = null;
   const handleWindowFocus = () => {
     focusSearchSoon();
@@ -77,8 +101,30 @@
     ? (mergeSearchHits(lexicalHits, semanticHits) as SearchHit[])
     : notes.map((note) => ({ note, matchType: 'lexical', snippet: '', score: 0 }));
   $: visibleHits = baseVisibleHits;
-  $: maximumIndex = Math.max(0, visibleHits.length - 1 + (activeQuery.trim() ? 1 : 0));
+  $: updateSearchTargets(visibleHits, activeQuery);
+  $: activeMatchTarget = activeSearchLineTarget(searchTargets, activeMatchKey);
+  $: maximumIndex = Math.max(0, visibleHits.length - 1);
   $: if (selectedIndex > maximumIndex) selectedIndex = maximumIndex;
+  $: semanticSearchExpected = Boolean(client && semanticEnabled && activeQuery.trim().length >= 3);
+  $: searchPending = Boolean(activeQuery.trim()) && (
+    lexicalSettledGeneration !== searchGeneration ||
+    (semanticSearchExpected && semanticSettledGeneration !== searchGeneration)
+  );
+  $: canCreateFromSearch = canCreateFromCompletedSearch({
+    query: activeQuery,
+    pending: searchPending,
+    visibleHitCount: visibleHits.length,
+    targetCount: searchTargets.length,
+    generation: searchGeneration,
+    lexicalSuccessfulGeneration,
+    semanticExpected: semanticSearchExpected,
+    semanticSuccessfulGeneration
+  });
+  $: activeDescendant = activeQuery.trim()
+    ? searchTargetElementId(activeMatchTarget)
+    : keyboardSelectionVisible && editingId === null
+      ? `search-option-${selectedIndex}`
+      : undefined;
 
   onMount(() => {
     applyTheme();
@@ -123,6 +169,7 @@
     const generation = ++notesGeneration;
     loading = true;
     errorMessage = '';
+    if (!demoMode) connectionStatus = 'checking';
     try {
       const loaded = await client.listNotes(sortMode, (partial) => {
         if (generation === notesGeneration) notes = preserveEditingNote(partial);
@@ -131,9 +178,12 @@
         notes = preserveEditingNote(loaded);
         refreshSearchHitNotes(notes);
         lastNotesRefreshAt = Date.now();
+        if (!demoMode) connectionStatus = 'online';
       }
     } catch (error) {
-      if (generation === notesGeneration) handleError(error, '无法从云端载入笔记。');
+      if (generation === notesGeneration) {
+        handleError(error, '无法从云端载入笔记。');
+      }
     } finally {
       if (generation === notesGeneration) loading = false;
     }
@@ -142,6 +192,7 @@
   function connect(profile: ConnectionProfile): void {
     connection = profile;
     demoMode = false;
+    connectionStatus = 'checking';
     client = new RemoteNotesClient(profile);
     notes = [];
     saveConnection(profile);
@@ -163,6 +214,7 @@
   function startDemo(): void {
     connection = null;
     demoMode = true;
+    connectionStatus = 'online';
     client = new DemoNotesClient();
     void refreshNotes();
     focusSearchSoon(true);
@@ -183,11 +235,47 @@
     connection = null;
     client = null;
     demoMode = false;
+    connectionStatus = 'checking';
     notes = [];
     query = '';
     activeQuery = '';
+    activeMatchKey = null;
     editingId = null;
     settingsOpen = false;
+  }
+
+  async function retryConnection(): Promise<void> {
+    await refreshNotes();
+    if (!demoMode && connectionStatus !== 'online') {
+      throw new Error(errorMessage || '仍然无法连接 Worker。');
+    }
+  }
+
+  async function updateEndpoint(value: string): Promise<void> {
+    if (!connection) throw new Error('当前没有可修复的设备连接。');
+    const endpoint = normalizeEndpoint(value);
+    const nextConnection: ConnectionProfile = { ...connection, endpoint };
+    const nextClient = new RemoteNotesClient(nextConnection);
+    const previousStatus = connectionStatus;
+    connectionStatus = 'checking';
+
+    try {
+      const loaded = await nextClient.listNotes(sortMode);
+      notesGeneration += 1;
+      connection = nextConnection;
+      client = nextClient;
+      notes = loaded;
+      refreshSearchHitNotes(notes);
+      lastNotesRefreshAt = Date.now();
+      errorMessage = '';
+      connectionStatus = 'online';
+      saveConnection(nextConnection);
+      applyQuery(activeQuery);
+      showToast('Worker 地址已验证并保存');
+    } catch (error) {
+      connectionStatus = previousStatus;
+      throw error;
+    }
   }
 
   function updateQuery(value: string): void {
@@ -220,6 +308,7 @@
   function applyQuery(value: string, preserveResults = false): void {
     activeQuery = value;
     selectedIndex = 0;
+    activeMatchKey = null;
     errorMessage = '';
     window.clearTimeout(lexicalTimer);
     window.clearTimeout(semanticTimer);
@@ -232,6 +321,9 @@
       semanticHits = [];
     }
     lexicalSettledGeneration = 0;
+    lexicalSuccessfulGeneration = 0;
+    semanticSettledGeneration = 0;
+    semanticSuccessfulGeneration = 0;
     pendingSemanticGeneration = 0;
     pendingSemanticHits = [];
 
@@ -245,6 +337,8 @@
       semanticTimer = window.setTimeout(() => void performSemanticSearch(trimmed, generation), 360);
     } else {
       semanticHits = [];
+      semanticSettledGeneration = generation;
+      semanticSuccessfulGeneration = generation;
     }
   }
 
@@ -252,7 +346,10 @@
     if (!client) return;
     try {
       const hits = await client.lexicalSearch(value);
-      if (generation === searchGeneration) lexicalHits = hits;
+      if (generation === searchGeneration) {
+        lexicalHits = hits;
+        lexicalSuccessfulGeneration = generation;
+      }
     } catch (error) {
       if (generation === searchGeneration) handleError(error, '关键词搜索失败。');
     } finally {
@@ -273,6 +370,7 @@
     try {
       const hits = await client.semanticSearch(value);
       if (generation === searchGeneration) {
+        semanticSuccessfulGeneration = generation;
         if (lexicalSettledGeneration === generation) semanticHits = hits;
         else {
           pendingSemanticGeneration = generation;
@@ -289,7 +387,10 @@
         }
       }
     } finally {
-      if (generation === searchGeneration) semanticSearching = false;
+      if (generation === searchGeneration) {
+        semanticSearching = false;
+        semanticSettledGeneration = generation;
+      }
     }
   }
 
@@ -358,7 +459,23 @@
       keyboardEvent.preventDefault();
       return;
     }
-    const hasCreateRow = Boolean(activeQuery.trim());
+    const hasSearchQuery = Boolean(activeQuery.trim());
+
+    if (hasSearchQuery && (keyboardEvent.key === 'ArrowDown' || keyboardEvent.key === 'Enter')) {
+      keyboardEvent.preventDefault();
+      if (searchTargets.length > 0) {
+        moveSearchMatch('next');
+      } else if (keyboardEvent.key === 'Enter' && canCreateFromSearch) {
+        void createFromQuery();
+      }
+      return;
+    }
+
+    if (hasSearchQuery && keyboardEvent.key === 'ArrowUp') {
+      keyboardEvent.preventDefault();
+      if (searchTargets.length > 0) moveSearchMatch('previous');
+      return;
+    }
 
     if (keyboardEvent.key === 'ArrowDown') {
       keyboardEvent.preventDefault();
@@ -367,7 +484,7 @@
         selectedIndex,
         maximumIndex,
         keyboardSelectionVisible,
-        Boolean(activeQuery.trim()),
+        false,
         visibleHits.length > 0
       );
       keyboardSelectionVisible = true;
@@ -382,7 +499,7 @@
         selectedIndex,
         maximumIndex,
         keyboardSelectionVisible,
-        Boolean(activeQuery.trim()),
+        false,
         visibleHits.length > 0
       );
       keyboardSelectionVisible = true;
@@ -392,12 +509,17 @@
 
     if (keyboardEvent.key === 'Enter') {
       keyboardEvent.preventDefault();
-      if (hasCreateRow && selectedIndex === 0) void createFromQuery();
-      else void openSelectedNote(false);
+      void openSelectedNote(false);
       return;
     }
 
-    if (keyboardEvent.key === 'Tab' && !(hasCreateRow && selectedIndex === 0)) {
+    if (keyboardEvent.key === 'Tab' && hasSearchQuery && searchTargets.length > 0) {
+      keyboardEvent.preventDefault();
+      void openActiveSearchMatch(true);
+      return;
+    }
+
+    if (keyboardEvent.key === 'Tab' && !hasSearchQuery && visibleHits.length > 0) {
       keyboardEvent.preventDefault();
       void openSelectedNote(true);
       return;
@@ -410,6 +532,33 @@
     }
   }
 
+  function moveSearchMatch(direction: 'next' | 'previous'): void {
+    const nextKey = moveActiveMatchKey(searchTargets, activeMatchKey, direction);
+    activeMatchKey = nextKey;
+    const target = activeSearchLineTarget(searchTargets, nextKey);
+    if (target) scrollToSearchTarget(target);
+  }
+
+  async function openActiveSearchMatch(copyMatched: boolean): Promise<void> {
+    const target = activeSearchLineTarget(searchTargets, activeMatchKey) ?? searchTargets[0];
+    if (!target) return;
+
+    activeMatchKey = target.key;
+    if (copyMatched && await copyText(target.text)) {
+      showToast(
+        target.source === 'semantic'
+          ? '语义结果按笔记定位，已复制标题'
+          : target.source === 'title'
+            ? '已复制命中标题'
+            : `已复制第 ${target.lineNumber} 行`
+      );
+    }
+    if (!(await beginEditing(target.noteId))) return;
+    activeMatchKey = null;
+    await tick();
+    focusEditorTarget(target);
+  }
+
   async function openSelectedNote(copyMatched: boolean): Promise<void> {
     const hit = selectedHit();
     if (!hit) return;
@@ -419,6 +568,25 @@
       activeEditor?.focusBody();
       document.getElementById(`note-${hit.note.id}`)?.scrollIntoView({ block: 'nearest' });
     }, 0);
+  }
+
+  async function beginEditingAt(id: string, target: EditorFocusTarget): Promise<void> {
+    if (!(await beginEditing(id))) return;
+    activeMatchKey = null;
+    await tick();
+    focusEditorTarget(target);
+  }
+
+  function focusEditorTarget(target: EditorFocusTarget | SearchLineTarget): void {
+    if (target.source === 'title') {
+      activeEditor?.focusTitle();
+      return;
+    }
+    if (target.source === 'semantic') {
+      activeEditor?.focusBody();
+      return;
+    }
+    if (target.rawLineIndex !== null) activeEditor?.focusLogicalLine(target.rawLineIndex);
   }
 
   async function beginEditing(id: string): Promise<boolean> {
@@ -465,8 +633,7 @@
   }
 
   function selectedHit(): SearchHit | undefined {
-    const noteIndex = selectedIndex - (activeQuery.trim() ? 1 : 0);
-    return visibleHits[noteIndex];
+    return visibleHits[selectedIndex];
   }
 
   async function copyHit(hit: SearchHit): Promise<void> {
@@ -509,6 +676,13 @@
     const byId = new Map(freshNotes.map((note) => [note.id, note]));
     lexicalHits = lexicalHits.map((hit) => ({ ...hit, note: byId.get(hit.note.id) ?? hit.note }));
     semanticHits = semanticHits.map((hit) => ({ ...hit, note: byId.get(hit.note.id) ?? hit.note }));
+  }
+
+  function updateSearchTargets(hits: SearchHit[], value: string): void {
+    const previousTarget = activeSearchLineTarget(searchTargets, activeMatchKey);
+    const nextTargets = value.trim() ? collectSearchLineTargets(hits, value) : [];
+    activeMatchKey = retainActiveMatchKey(nextTargets, activeMatchKey, previousTarget);
+    searchTargets = nextTargets;
   }
 
   function preserveEditingNote(freshNotes: Note[]): Note[] {
@@ -565,7 +739,22 @@
 
   function scrollToOption(index: number): void {
     window.setTimeout(() => {
-      document.getElementById(`search-option-${index}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      document.getElementById(`search-option-${index}`)?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    }, 0);
+  }
+
+  function searchTargetElementId(target: SearchLineTarget | null): string | undefined {
+    if (!target) return undefined;
+    if (target.source === 'semantic') return `note-${target.noteId}-title`;
+    if (target.source === 'title') return `note-${target.noteId}-title`;
+    return `note-${target.noteId}-line-${target.rawLineIndex}`;
+  }
+
+  function scrollToSearchTarget(target: SearchLineTarget): void {
+    const elementId = searchTargetElementId(target);
+    if (!elementId) return;
+    window.setTimeout(() => {
+      document.getElementById(elementId)?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
     }, 0);
   }
 
@@ -578,7 +767,23 @@
 
   function handleError(error: unknown, fallback: string): void {
     errorMessage = error instanceof Error ? error.message : fallback;
-    if (error instanceof ApiError && error.status === 401) showToast('连接已失效，请重新配对。');
+    updateConnectionStatus(error);
+    if (error instanceof ApiError && [401, 403].includes(error.status)) {
+      showToast('设备授权已失效，请重新配对。');
+    }
+  }
+
+  function updateConnectionStatus(error: unknown): void {
+    if (demoMode || !connection) return;
+    if (error instanceof ApiError && (error.status === 0 || error.code === 'NETWORK_ERROR')) {
+      connectionStatus = 'unreachable';
+      return;
+    }
+    if (error instanceof ApiError && [401, 403].includes(error.status)) {
+      connectionStatus = 'auth-invalid';
+      return;
+    }
+    if (connectionStatus === 'checking') connectionStatus = 'unreachable';
   }
 
   function readPreference(key: string, fallback: string): string {
@@ -607,7 +812,7 @@
       value={query}
       {semanticSearching}
       {semanticEnabled}
-      {selectedIndex}
+      {activeDescendant}
       on:input={(event) => updateQuery(event.detail)}
       on:keyaction={handleSearchKey}
       on:settings={() => (settingsOpen = true)}
@@ -618,14 +823,14 @@
         {#if querySaving}
           正在保存当前笔记并切换搜索…
         {:else if activeQuery.trim()}
-          {visibleHits.length} 条匹配
+          {searchTargets.length} 处匹配 · {visibleHits.length} 条笔记
           {#if semanticSearching} · 正在补充语义结果{/if}
         {:else}
           {notes.length} 条笔记 · 全文平铺
         {/if}
       </span>
       <span class="hidden items-center gap-1.5 sm:flex">
-        <Command size={12} /> ⇧ Space 唤起 · Tab 复制并编辑
+        <Command size={12} /> ⇧ Space 唤起 · Enter/↓ 下一处 · Tab 复制并编辑
       </span>
     </div>
 
@@ -638,8 +843,16 @@
 
     {#if errorMessage}
       <div class="alert alert-error mb-3 min-h-0 rounded-box py-2 text-sm" role="alert">
-        <span>{errorMessage}</span>
-        <button class="btn btn-ghost btn-xs" on:click={() => (errorMessage = '')}>关闭</button>
+        <span class="min-w-0 flex-1">{errorMessage}</span>
+        <div class="flex shrink-0 gap-1">
+          {#if !demoMode && connectionStatus === 'unreachable'}
+            <button class="btn btn-ghost btn-xs" on:click={() => void retryConnection().catch(() => undefined)}>重试</button>
+            <button class="btn btn-ghost btn-xs" on:click={() => (settingsOpen = true)}>修复地址</button>
+          {:else if !demoMode && connectionStatus === 'auth-invalid'}
+            <button class="btn btn-ghost btn-xs" on:click={() => void disconnect()}>重新配对</button>
+          {/if}
+          <button class="btn btn-ghost btn-xs" on:click={() => (errorMessage = '')}>关闭</button>
+        </div>
       </div>
     {/if}
 
@@ -647,7 +860,8 @@
       <div class="mb-2">
         <QuickCreateRow
           query={activeQuery}
-          selected={isKeyboardOptionSelected(keyboardSelectionVisible, editingId, selectedIndex, 0)}
+          selected={false}
+          enterCreates={canCreateFromSearch}
           on:click={createFromQuery}
         />
       </div>
@@ -657,6 +871,17 @@
       <div class="flex items-center justify-center gap-2 py-20 text-sm text-base-content/45">
         <LoaderCircle size={18} class="animate-spin" /> 正在读取云端笔记…
       </div>
+    {:else if !demoMode && connectionStatus !== 'online' && visibleHits.length === 0}
+      <div class="flex flex-col items-center py-20 text-center text-base-content/42">
+        <CloudOff size={30} strokeWidth={1.5} />
+        <p class="mt-3 text-sm">
+          {connectionStatus === 'auth-invalid' ? '设备授权已失效' : '尚未读取到云端笔记'}
+        </p>
+        <div class="mt-4 flex gap-2">
+          <button class="btn btn-outline btn-sm" on:click={() => void retryConnection().catch(() => undefined)}>重试连接</button>
+          <button class="btn btn-primary btn-sm" on:click={() => (settingsOpen = true)}>修复连接</button>
+        </div>
+      </div>
     {:else if visibleHits.length === 0 && !activeQuery.trim()}
       <div class="flex flex-col items-center py-20 text-center text-base-content/42">
         <SearchX size={30} strokeWidth={1.5} />
@@ -665,7 +890,13 @@
       </div>
     {:else if visibleHits.length === 0 && activeQuery.trim()}
       <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
-        {#if semanticSearching}<Sparkles size={16} class="text-primary" /> 正在寻找语义相关内容…{:else}没有现有匹配，可以直接创建。{/if}
+        {#if searchPending}
+          <Sparkles size={16} class="text-primary" /> 正在搜索匹配内容…
+        {:else if canCreateFromSearch}
+          没有现有匹配，可以直接创建。
+        {:else}
+          搜索暂时未能确认结果；仍可点击上方明确创建。
+        {/if}
       </div>
     {:else}
       <section class="pb-16" aria-label="笔记流">
@@ -679,19 +910,28 @@
                 {deleteNote}
                 {uploadImage}
                 close={finishEditing}
+                activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
+                  ? activeMatchTarget.rawLineIndex
+                  : null}
+                activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                on:contentchange={() => (activeMatchKey = null)}
               />
             {:else}
               <NoteCard
                 {hit}
                 query={activeQuery}
-                optionIndex={index + (activeQuery.trim() ? 1 : 0)}
-                selected={isKeyboardOptionSelected(
+                optionIndex={index}
+                selected={!activeQuery.trim() && isKeyboardOptionSelected(
                   keyboardSelectionVisible,
                   editingId,
                   selectedIndex,
-                  index + (activeQuery.trim() ? 1 : 0)
+                  index
                 )}
-                on:edit={() => void beginEditing(hit.note.id)}
+                activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
+                  ? activeMatchTarget.rawLineIndex
+                  : null}
+                activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                on:edit={(event) => void beginEditingAt(hit.note.id, event.detail)}
               />
             {/if}
           </div>
@@ -705,8 +945,11 @@
     {sortMode}
     {semanticEnabled}
     {demoMode}
+    {connectionStatus}
     endpoint={connection?.endpoint ?? ''}
-    createPairingCode={!demoMode && client ? () => client!.createPairingCode() : undefined}
+    {updateEndpoint}
+    {retryConnection}
+    createPairingCode={!demoMode && connectionStatus === 'online' && client ? () => client!.createPairingCode() : undefined}
     on:close={() => (settingsOpen = false)}
     on:sortchange={(event) => changeSort(event.detail)}
     on:semanticchange={(event) => void changeSemantic(event.detail)}
