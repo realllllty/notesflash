@@ -5,9 +5,6 @@
   "type": "module",
   "cloudflare": {
     "bindings": {
-      "OWNER_SETUP_SECRET": {
-        "description": "Generate a unique value such as `openssl rand -hex 32`, save it in a password manager, and use it only for NotesFlash setup and emergency device recovery."
-      },
       "VECTOR_INDEX": {
         "description": "NotesFlash uses BGE-M3 vectors with **1024 dimensions** and the **cosine** metric."
       }

@@ -13,15 +13,15 @@
   type="button"
   aria-current={selected ? 'true' : undefined}
   class:selected
-  class="quick-create group flex w-full items-center gap-3 rounded-box border border-dashed px-3 py-3 text-left transition"
+  class="quick-create group flex w-full items-center gap-3 rounded-box border px-3 py-2.5 text-left"
   on:click
 >
-  <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-content">
-    <Plus size={18} />
+  <span class="create-icon flex size-8 shrink-0 items-center justify-center rounded-lg">
+    <Plus size={17} strokeWidth={1.8} />
   </span>
   <span class="min-w-0 flex-1">
-    <span class="block text-sm font-medium">创建“{draft.title || '无标题'}”</span>
-    <span class="block truncate text-xs text-base-content/48">
+    <span class="block text-[13px] font-medium tracking-[-0.005em]">创建“{draft.title || '无标题'}”</span>
+    <span class="mt-0.5 block truncate text-[11px] text-base-content/42">
       {#if draft.hasBodySeparator}
         正文：{draft.body || '继续在搜索框中输入正文'}
       {:else}
@@ -29,20 +29,40 @@
       {/if}
     </span>
   </span>
-  <span class="hidden items-center gap-1 text-[11px] text-base-content/38 group-hover:flex sm:flex">
+  <span class="hidden items-center gap-1 text-[10px] text-base-content/32 group-hover:flex sm:flex">
     <CornerDownLeft size={13} /> Enter
   </span>
 </button>
 
 <style>
   .quick-create {
-    border-color: color-mix(in oklab, var(--color-primary) 25%, var(--color-base-300));
-    background: color-mix(in oklab, var(--color-primary) 4%, var(--color-base-100));
+    outline: none;
+    border-color: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+    background: color-mix(in oklab, var(--color-base-200) 54%, transparent);
+    transition: border-color 120ms ease, background-color 120ms ease;
   }
 
-  .quick-create:hover,
+  .quick-create:hover {
+    border-color: color-mix(in oklab, var(--color-base-content) 15%, transparent);
+    background: color-mix(in oklab, var(--color-base-200) 78%, transparent);
+  }
+
   .quick-create.selected {
-    border-color: color-mix(in oklab, var(--color-primary) 55%, var(--color-base-300));
+    background: color-mix(in oklab, var(--color-primary) 3%, var(--color-base-200));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 24%, transparent);
+  }
+
+  .quick-create:focus-visible:not(.selected) {
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-base-content) 18%, transparent);
+  }
+
+  .create-icon {
+    color: color-mix(in oklab, var(--color-primary) 70%, var(--color-base-content));
     background: color-mix(in oklab, var(--color-primary) 9%, var(--color-base-100));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 12%, transparent);
+  }
+
+  .quick-create.selected .create-icon {
+    background: color-mix(in oklab, var(--color-primary) 13%, var(--color-base-100));
   }
 </style>

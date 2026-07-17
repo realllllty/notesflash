@@ -10,6 +10,108 @@ interface SessionRow {
   last_seen_at: number | null;
 }
 
+interface BootstrapClaim {
+  claimHash: string;
+  deviceId: string;
+  expiresAt: number;
+}
+
+const BOOTSTRAP_COOKIE = "notesflash_bootstrap";
+const BOOTSTRAP_COOKIE_TTL_SECONDS = 24 * 60 * 60;
+
+function cookieValue(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const item of header.split(";")) {
+    const [rawName, ...rawValue] = item.trim().split("=");
+    if (rawName === name) return rawValue.join("=") || null;
+  }
+  return null;
+}
+
+function bootstrapCookie(context: RequestContext, token: string, expiresAt: number): string {
+  const secure = context.url.protocol === "https:" ? "; Secure" : "";
+  const maxAge = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+  return `${BOOTSTRAP_COOKIE}=${token}; Max-Age=${maxAge}; Path=/api/setup; HttpOnly; SameSite=Strict${secure}`;
+}
+
+async function bootstrapClaim(env: Env): Promise<BootstrapClaim | null> {
+  const state = await env.DB.prepare(
+    `SELECT
+       MAX(CASE WHEN key = 'bootstrap_claim_hash' THEN value END) AS claim_hash,
+       MAX(CASE WHEN key = 'bootstrap_device_id' THEN value END) AS device_id,
+       MAX(CASE WHEN key = 'bootstrap_claim_expires_at' THEN value END) AS expires_at
+     FROM instance_state
+     WHERE key IN ('bootstrap_claim_hash', 'bootstrap_device_id', 'bootstrap_claim_expires_at')`,
+  ).first<{ claim_hash: string | null; device_id: string | null; expires_at: string | null }>();
+  const expiresAt = Number(state?.expires_at);
+  if (!state?.claim_hash || !state.device_id || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return null;
+  }
+
+  const device = await env.DB.prepare(
+    `SELECT id FROM devices
+     WHERE id = ? AND platform = 'setup-bootstrap' AND revoked_at IS NULL`,
+  )
+    .bind(state.device_id)
+    .first<{ id: string }>();
+  if (!device) return null;
+  return { claimHash: state.claim_hash, deviceId: device.id, expiresAt };
+}
+
+async function validBootstrapToken(
+  context: RequestContext,
+  claim: BootstrapClaim | null,
+): Promise<string | null> {
+  if (!claim) return null;
+  const token = cookieValue(context.request, BOOTSTRAP_COOKIE);
+  if (!token) return null;
+  const candidateHash = await sha256Hex(token);
+  return constantTimeEqual(candidateHash, claim.claimHash) ? token : null;
+}
+
+async function replaceBootstrapPairingCode(
+  env: Env,
+  bootstrapDeviceId: string,
+): Promise<{ code: string; expiresAt: number }> {
+  const code = createPairingCode();
+  const codeHash = await sha256Hex(code.toUpperCase());
+  const now = Date.now();
+  const expiresAt = now + 10 * 60 * 1000;
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE pairing_codes SET used_at = ?
+       WHERE created_by_device_id = ? AND used_at IS NULL`,
+    ).bind(now, bootstrapDeviceId),
+    env.DB.prepare(
+      `INSERT INTO pairing_codes(
+         id, code_hash, created_by_device_id, created_at, expires_at
+       )
+       SELECT ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM devices
+         WHERE id = ? AND platform = 'setup-bootstrap' AND revoked_at IS NULL
+       )
+       AND EXISTS (
+         SELECT 1 FROM instance_state
+         WHERE key = 'bootstrap_device_id' AND value = ?
+       )`,
+    ).bind(
+      newId(),
+      codeHash,
+      bootstrapDeviceId,
+      now,
+      expiresAt,
+      bootstrapDeviceId,
+      bootstrapDeviceId,
+    ),
+  ]);
+  if ((results[1].meta.changes ?? 0) !== 1) {
+    throw new AppError(409, "SETUP_COMPLETED", "The first device has already completed setup.");
+  }
+  return { code, expiresAt };
+}
+
 async function enforceRateLimit(
   context: RequestContext,
   scope: string,
@@ -101,70 +203,104 @@ export async function authenticate(request: Request, env: Env): Promise<DevicePr
 
 export async function setupStatus(context: RequestContext): Promise<Response> {
   const instanceId = await getInstanceId(context.env);
+  const claim = instanceId ? await bootstrapClaim(context.env) : null;
+  const resumeToken = await validBootstrapToken(context, claim);
   return json({
     initialized: instanceId !== null,
-    instanceId,
+    canResumeSetup: resumeToken !== null,
     instanceName: context.env.INSTANCE_NAME ?? "NotesFlash Cloud",
   });
 }
 
 export async function initializeInstance(context: RequestContext): Promise<Response> {
-  const body = await readJson<{
-    setupSecret?: unknown;
-    deviceName?: unknown;
-    platform?: unknown;
-    publicKey?: unknown;
-  }>(context.request);
-  await enforceRateLimit(context, "owner-setup", 10, 15 * 60 * 1000);
+  await enforceRateLimit(context, "initial-claim", 5, 15 * 60 * 1000);
 
-  const configuredSecret = context.env.OWNER_SETUP_SECRET;
-  if (!configuredSecret) {
-    throw new AppError(
-      503,
-      "SETUP_SECRET_MISSING",
-      "OWNER_SETUP_SECRET is not configured on this Worker.",
+  const origin = context.request.headers.get("origin");
+  const fetchSite = context.request.headers.get("sec-fetch-site");
+  if (origin !== context.url.origin || (fetchSite !== null && fetchSite !== "same-origin")) {
+    throw new AppError(403, "SAME_ORIGIN_REQUIRED", "Initial setup must be started from this Worker.");
+  }
+
+  const existingInstanceId = await getInstanceId(context.env);
+  if (existingInstanceId) {
+    const claim = await bootstrapClaim(context.env);
+    const resumeToken = await validBootstrapToken(context, claim);
+    if (!claim || !resumeToken) {
+      throw new AppError(409, "ALREADY_INITIALIZED", "This NotesFlash instance is already initialized.");
+    }
+
+    const pairing = await replaceBootstrapPairingCode(context.env, claim.deviceId);
+    return json(
+      { ...pairing, instanceId: existingInstanceId },
+      201,
+      { "set-cookie": bootstrapCookie(context, resumeToken, claim.expiresAt) },
     );
   }
 
-  const setupSecret = requireString(body.setupSecret, "setupSecret", { min: 12, max: 512 });
-  if (!constantTimeEqual(setupSecret, configuredSecret)) {
-    throw new AppError(403, "INVALID_SETUP_SECRET", "The setup secret is not valid.");
-  }
-
-  if (await getInstanceId(context.env)) {
-    throw new AppError(409, "ALREADY_INITIALIZED", "This NotesFlash instance is already initialized.");
-  }
-
-  const deviceName = requireString(body.deviceName ?? "Owner device", "deviceName", {
-    min: 1,
-    max: 100,
-  });
-  const platform =
-    typeof body.platform === "string" && body.platform.length <= 50 ? body.platform : "unknown";
-  const publicKey =
-    typeof body.publicKey === "string" && body.publicKey.length <= 4096 ? body.publicKey : null;
-
   const now = Date.now();
   const instanceId = newId();
-  const deviceId = newId();
+  const bootstrapDeviceId = newId();
+  const bootstrapToken = randomToken(32);
+  const bootstrapTokenHash = await sha256Hex(bootstrapToken);
+  const bootstrapExpiresAt = now + BOOTSTRAP_COOKIE_TTL_SECONDS * 1000;
+  const imageKey = randomToken(32);
+  const code = createPairingCode();
+  const codeHash = await sha256Hex(code.toUpperCase());
+  const expiresAt = now + 10 * 60 * 1000;
 
-  await context.env.DB.batch([
-    context.env.DB.prepare(
-      `INSERT INTO devices(id, name, platform, public_key, created_at, last_seen_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).bind(deviceId, deviceName, platform, publicKey, now, now),
-    context.env.DB.prepare(
-      `INSERT INTO instance_state(key, value, updated_at)
-       VALUES ('instance_id', ?, ?)`,
-    ).bind(instanceId, now),
-    context.env.DB.prepare(
-      `INSERT INTO instance_state(key, value, updated_at)
-       VALUES ('initialized_at', ?, ?)`,
-    ).bind(String(now), now),
-  ]);
+  try {
+    await context.env.DB.batch([
+      context.env.DB.prepare(
+        `INSERT INTO devices(id, name, platform, public_key, created_at, last_seen_at)
+         VALUES (?, 'Initial setup', 'setup-bootstrap', NULL, ?, NULL)`,
+      ).bind(bootstrapDeviceId, now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('instance_id', ?, ?)`,
+      ).bind(instanceId, now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('initialized_at', ?, ?)`,
+      ).bind(String(now), now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('bootstrap_claim_hash', ?, ?)`,
+      ).bind(bootstrapTokenHash, now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('bootstrap_device_id', ?, ?)`,
+      ).bind(bootstrapDeviceId, now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('bootstrap_claim_expires_at', ?, ?)`,
+      ).bind(String(bootstrapExpiresAt), now),
+      context.env.DB.prepare(
+        `INSERT INTO instance_state(key, value, updated_at)
+         VALUES ('image_signing_key', ?, ?)
+         ON CONFLICT(key) DO NOTHING`,
+      ).bind(imageKey, now),
+      context.env.DB.prepare(
+        `INSERT INTO pairing_codes(
+           id, code_hash, created_by_device_id, created_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(newId(), codeHash, bootstrapDeviceId, now, expiresAt),
+    ]);
+  } catch (error) {
+    if (await getInstanceId(context.env)) {
+      throw new AppError(
+        409,
+        "ALREADY_INITIALIZED",
+        "Another request has already initialized this NotesFlash instance.",
+      );
+    }
+    throw error;
+  }
 
-  const token = await issueSession(context.env, deviceId);
-  return json({ token, instanceId, deviceId }, 201);
+  return json(
+    { code, expiresAt, instanceId },
+    201,
+    { "set-cookie": bootstrapCookie(context, bootstrapToken, bootstrapExpiresAt) },
+  );
 }
 
 export async function createPairingCodeHandler(context: RequestContext): Promise<Response> {
@@ -185,42 +321,6 @@ export async function createPairingCodeHandler(context: RequestContext): Promise
   return json({ code, expiresAt });
 }
 
-export async function createRecoveryPairingCode(context: RequestContext): Promise<Response> {
-  const body = await readJson<{ setupSecret?: unknown; deviceName?: unknown }>(context.request);
-  await enforceRateLimit(context, "recovery-pairing", 10, 15 * 60 * 1000);
-  const configuredSecret = context.env.OWNER_SETUP_SECRET;
-  if (!configuredSecret) {
-    throw new AppError(503, "SETUP_SECRET_MISSING", "OWNER_SETUP_SECRET is not configured.");
-  }
-  const setupSecret = requireString(body.setupSecret, "setupSecret", { min: 12, max: 512 });
-  if (!constantTimeEqual(setupSecret, configuredSecret)) {
-    throw new AppError(403, "INVALID_SETUP_SECRET", "The setup secret is not valid.");
-  }
-
-  const instanceId = await getInstanceId(context.env);
-  if (!instanceId) {
-    throw new AppError(409, "NOT_INITIALIZED", "Initialize this NotesFlash instance first.");
-  }
-  const creator = await context.env.DB.prepare(
-    "SELECT id FROM devices WHERE revoked_at IS NULL ORDER BY created_at ASC LIMIT 1",
-  ).first<{ id: string }>();
-  if (!creator) throw new AppError(409, "NO_OWNER_DEVICE", "No active owner device exists.");
-
-  const code = createPairingCode();
-  const codeHash = await sha256Hex(code.toUpperCase());
-  const now = Date.now();
-  const expiresAt = now + 10 * 60 * 1000;
-  await context.env.DB.prepare(
-    `INSERT INTO pairing_codes(
-       id, code_hash, created_by_device_id, created_at, expires_at
-     ) VALUES (?, ?, ?, ?, ?)`,
-  )
-    .bind(newId(), codeHash, creator.id, now, expiresAt)
-    .run();
-
-  return json({ code, expiresAt, instanceId });
-}
-
 export async function pairDevice(context: RequestContext): Promise<Response> {
   const body = await readJson<{
     code?: unknown;
@@ -239,11 +339,16 @@ export async function pairDevice(context: RequestContext): Promise<Response> {
   const now = Date.now();
   const codeHash = await sha256Hex(code);
   const pairing = await context.env.DB.prepare(
-    `SELECT id FROM pairing_codes
-     WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?`,
+    `SELECT pc.id, pc.created_by_device_id, creator.platform AS created_by_platform
+     FROM pairing_codes pc
+     JOIN devices creator ON creator.id = pc.created_by_device_id
+     WHERE pc.code_hash = ?
+       AND pc.used_at IS NULL
+       AND pc.expires_at > ?
+       AND creator.revoked_at IS NULL`,
   )
     .bind(codeHash, now)
-    .first<{ id: string }>();
+    .first<{ id: string; created_by_device_id: string; created_by_platform: string }>();
 
   if (!pairing) {
     throw new AppError(400, "INVALID_PAIRING_CODE", "The pairing code is invalid or expired.");
@@ -273,6 +378,24 @@ export async function pairDevice(context: RequestContext): Promise<Response> {
   try {
     const token = await issueSession(context.env, deviceId);
     const instanceId = await getInstanceId(context.env);
+    if (pairing.created_by_platform === "setup-bootstrap") {
+      await context.env.DB.batch([
+        context.env.DB.prepare(
+          `UPDATE pairing_codes SET used_at = ?
+           WHERE created_by_device_id = ? AND used_at IS NULL`,
+        ).bind(now, pairing.created_by_device_id),
+        context.env.DB.prepare(
+          `UPDATE devices SET revoked_at = ?
+           WHERE id = ? AND platform = 'setup-bootstrap' AND revoked_at IS NULL`,
+        ).bind(now, pairing.created_by_device_id),
+        context.env.DB.prepare(
+          `DELETE FROM instance_state
+           WHERE key IN (
+             'bootstrap_claim_hash', 'bootstrap_device_id', 'bootstrap_claim_expires_at'
+           )`,
+        ),
+      ]);
+    }
     return json({ token, instanceId, deviceId }, 201);
   } catch (error) {
     await context.env.DB.prepare(
@@ -289,7 +412,9 @@ export async function listDevices(context: RequestContext): Promise<Response> {
   requirePrincipal(context);
   const result = await context.env.DB.prepare(
     `SELECT id, name, platform, created_at, last_seen_at, revoked_at
-     FROM devices ORDER BY created_at ASC`,
+     FROM devices
+     WHERE platform NOT IN ('setup-bootstrap', 'setup-web')
+     ORDER BY created_at ASC`,
   ).all<{
     id: string;
     name: string;
@@ -333,6 +458,10 @@ export async function revokeDevice(context: RequestContext, deviceId: string): P
     ).bind(now, deviceId),
     context.env.DB.prepare(
       "UPDATE device_sessions SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL",
+    ).bind(now, deviceId),
+    context.env.DB.prepare(
+      `UPDATE pairing_codes SET used_at = ?
+       WHERE created_by_device_id = ? AND used_at IS NULL`,
     ).bind(now, deviceId),
   ]);
   if ((result[0].meta.changes ?? 0) === 0) {

@@ -5,6 +5,7 @@ import type {
   ImageAsset,
   Note,
   NotesClient,
+  PairingCode,
   PairingResponse,
   SearchHit,
   SortMode,
@@ -82,6 +83,11 @@ export class RemoteNotesClient implements NotesClient {
     } finally {
       window.clearTimeout(timeout);
     }
+  }
+
+  async createPairingCode(): Promise<PairingCode> {
+    const payload = await this.request('/api/pairing-codes', { method: 'POST' });
+    return mapPairingCode(payload);
   }
 
   async listNotes(sort: SortMode, onProgress?: (notes: Note[]) => void): Promise<Note[]> {
@@ -225,6 +231,14 @@ export class DemoNotesClient implements NotesClient {
   }
 
   async logout(): Promise<void> {}
+
+  async createPairingCode(): Promise<PairingCode> {
+    await delay(180);
+    return {
+      code: createDemoPairingCode(),
+      expiresAt: Date.now() + 10 * 60 * 1000
+    };
+  }
 
   async listNotes(sort: SortMode, onProgress?: (notes: Note[]) => void): Promise<Note[]> {
     const result = sortNotes(this.notes.map(cloneNote), sort);
@@ -442,6 +456,23 @@ function cloneNote(note: Note): Note {
   return { ...note, images: note.images.map((image) => ({ ...image })) };
 }
 
+function mapPairingCode(payload: unknown): PairingCode {
+  const record = asRecord(payload);
+  const code = stringValue(record.code).trim().toUpperCase();
+  const expiresAt = optionalTimestampValue(record.expiresAt ?? record.expires_at);
+  if (!code || expiresAt === undefined) {
+    throw new ApiError('配对码响应缺少必要字段。', 500, 'INVALID_PAIRING_CODE_RESPONSE', payload);
+  }
+  return { code, expiresAt };
+}
+
+function createDemoPairingCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  const characters = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]);
+  return `NF-${characters.slice(0, 5).join('')}-${characters.slice(5).join('')}`;
+}
+
 function normalizeEndpoint(value: string): string {
   const endpoint = value.trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(endpoint)) throw new ApiError('Worker 地址必须以 https:// 开头。', 400);
@@ -508,6 +539,17 @@ function timestampValue(value: unknown): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return Date.now();
+}
+
+function optionalTimestampValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function embeddingStatusValue(value: unknown): Note['embeddingStatus'] {

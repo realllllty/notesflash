@@ -16,7 +16,8 @@
     saveConnection
   } from './lib/api';
   import { copyText } from './lib/clipboard';
-  import { firstMatchingLine, isImeComposing, mergeSearchHits, parseQuickNoteInput } from './lib/text';
+  import { isKeyboardOptionSelected, nextKeyboardSelection } from './lib/selection';
+  import { firstMatchingLine, isImeComposing, mergeSearchHits, normalizeText, parseQuickNoteInput } from './lib/text';
   import type {
     ConnectionProfile,
     ImageAsset,
@@ -36,7 +37,10 @@
   let baseVisibleHits: SearchHit[] = [];
   let visibleHits: SearchHit[] = [];
   let query = '';
+  let activeQuery = '';
+  let querySaving = false;
   let selectedIndex = 0;
+  let keyboardSelectionVisible = false;
   let editingId: string | null = null;
   let loading = false;
   let semanticSearching = false;
@@ -56,6 +60,7 @@
   let notesGeneration = 0;
   let lastNotesRefreshAt = 0;
   let activeEditor: { flush: () => Promise<boolean>; focusBody: () => void } | null = null;
+  let queryTransition: Promise<void> | null = null;
   const handleWindowFocus = () => {
     focusSearchSoon();
     refreshStaleImageUrls();
@@ -68,25 +73,11 @@
     if (themePreference === 'system') applyTheme();
   };
 
-  $: baseVisibleHits = query.trim()
+  $: baseVisibleHits = activeQuery.trim()
     ? (mergeSearchHits(lexicalHits, semanticHits) as SearchHit[])
     : notes.map((note) => ({ note, matchType: 'lexical', snippet: '', score: 0 }));
-  $: existingEditingHit = editingId
-    ? baseVisibleHits.find((hit) => hit.note.id === editingId)
-    : undefined;
-  $: editingNote = editingId ? notes.find((note) => note.id === editingId) : undefined;
-  $: editingHit = existingEditingHit ?? (editingNote
-    ? {
-        note: editingNote,
-        matchType: 'lexical' as const,
-        snippet: '',
-        score: Number.POSITIVE_INFINITY
-      }
-    : undefined);
-  $: visibleHits = editingHit && !baseVisibleHits.some((hit) => hit.note.id === editingHit?.note.id)
-    ? [editingHit, ...baseVisibleHits]
-    : baseVisibleHits;
-  $: maximumIndex = Math.max(0, visibleHits.length - 1 + (query.trim() ? 1 : 0));
+  $: visibleHits = baseVisibleHits;
+  $: maximumIndex = Math.max(0, visibleHits.length - 1 + (activeQuery.trim() ? 1 : 0));
   $: if (selectedIndex > maximumIndex) selectedIndex = maximumIndex;
 
   onMount(() => {
@@ -194,12 +185,40 @@
     demoMode = false;
     notes = [];
     query = '';
+    activeQuery = '';
     editingId = null;
     settingsOpen = false;
   }
 
   function updateQuery(value: string): void {
     query = value;
+    keyboardSelectionVisible = false;
+    if (!editingId) {
+      applyQuery(value);
+      return;
+    }
+
+    if (queryTransition) return;
+    querySaving = true;
+    const transition = (async () => {
+      const editor = activeEditor;
+      if (editor && !(await editor.flush())) {
+        query = activeQuery;
+        showToast('保存失败，已保留当前编辑内容，搜索没有切换。');
+        return;
+      }
+
+      editingId = null;
+      applyQuery(query);
+    })().finally(() => {
+      if (queryTransition === transition) queryTransition = null;
+      querySaving = false;
+    });
+    queryTransition = transition;
+  }
+
+  function applyQuery(value: string, preserveResults = false): void {
+    activeQuery = value;
     selectedIndex = 0;
     errorMessage = '';
     window.clearTimeout(lexicalTimer);
@@ -208,8 +227,10 @@
     const generation = ++searchGeneration;
     const trimmed = value.trim();
 
-    lexicalHits = [];
-    semanticHits = [];
+    if (!preserveResults) {
+      lexicalHits = [];
+      semanticHits = [];
+    }
     lexicalSettledGeneration = 0;
     pendingSemanticGeneration = 0;
     pendingSemanticHits = [];
@@ -274,6 +295,8 @@
 
   async function createFromQuery(): Promise<void> {
     if (!client) return;
+    if (queryTransition) return;
+    keyboardSelectionVisible = false;
     if (activeEditor && !(await activeEditor.flush())) {
       showToast('当前笔记尚未保存，暂时不能创建另一条。');
       return;
@@ -331,18 +354,38 @@
   function handleSearchKey(event: CustomEvent<KeyboardEvent>): void {
     const keyboardEvent = event.detail;
     if (isImeComposing(keyboardEvent)) return;
-    const hasCreateRow = Boolean(query.trim());
+    if (queryTransition) {
+      keyboardEvent.preventDefault();
+      return;
+    }
+    const hasCreateRow = Boolean(activeQuery.trim());
 
     if (keyboardEvent.key === 'ArrowDown') {
       keyboardEvent.preventDefault();
-      selectedIndex = selectedIndex >= maximumIndex ? 0 : selectedIndex + 1;
+      selectedIndex = nextKeyboardSelection(
+        'down',
+        selectedIndex,
+        maximumIndex,
+        keyboardSelectionVisible,
+        Boolean(activeQuery.trim()),
+        visibleHits.length > 0
+      );
+      keyboardSelectionVisible = true;
       scrollToOption(selectedIndex);
       return;
     }
 
     if (keyboardEvent.key === 'ArrowUp') {
       keyboardEvent.preventDefault();
-      selectedIndex = selectedIndex <= 0 ? maximumIndex : selectedIndex - 1;
+      selectedIndex = nextKeyboardSelection(
+        'up',
+        selectedIndex,
+        maximumIndex,
+        keyboardSelectionVisible,
+        Boolean(activeQuery.trim()),
+        visibleHits.length > 0
+      );
+      keyboardSelectionVisible = true;
       scrollToOption(selectedIndex);
       return;
     }
@@ -379,11 +422,15 @@
   }
 
   async function beginEditing(id: string): Promise<boolean> {
+    if (queryTransition) return false;
     if (editingId === id) return true;
+    keyboardSelectionVisible = false;
+    const previousEditingId = editingId;
     if (activeEditor && !(await activeEditor.flush())) {
       showToast('当前笔记尚未保存，仍保留在编辑状态。');
       return false;
     }
+    if (previousEditingId) pruneSavedSearchHit(previousEditingId);
     editingId = id;
     return true;
   }
@@ -393,16 +440,37 @@
       showToast('保存失败，编辑内容仍保留。');
       return;
     }
+    finishEditing();
+  }
+
+  function finishEditing(): void {
     editingId = null;
+    keyboardSelectionVisible = false;
+    if (activeQuery.trim()) applyQuery(activeQuery, true);
+    focusSearchSoon();
+  }
+
+  function pruneSavedSearchHit(noteId: string): void {
+    if (!activeQuery.trim()) return;
+    const note = notes.find((item) => item.id === noteId);
+    if (!note) return;
+    const normalizedQuery = normalizeText(activeQuery);
+    const stillMatchesCharacters = normalizeText(`${note.title}\n${note.body}`).includes(normalizedQuery);
+    if (!stillMatchesCharacters) {
+      lexicalHits = lexicalHits.filter((hit) => hit.note.id !== noteId);
+    }
+    if (note.embeddingStatus !== 'ready') {
+      semanticHits = semanticHits.filter((hit) => hit.note.id !== noteId);
+    }
   }
 
   function selectedHit(): SearchHit | undefined {
-    const noteIndex = selectedIndex - (query.trim() ? 1 : 0);
+    const noteIndex = selectedIndex - (activeQuery.trim() ? 1 : 0);
     return visibleHits[noteIndex];
   }
 
   async function copyHit(hit: SearchHit): Promise<void> {
-    const matched = firstMatchingLine(`${hit.note.title}\n${hit.note.body}`, query) || hit.note.title;
+    const matched = firstMatchingLine(`${hit.note.title}\n${hit.note.body}`, activeQuery) || hit.note.title;
     if (await copyText(matched)) {
       showToast('已复制命中内容');
     }
@@ -454,15 +522,25 @@
     void refreshNotes();
   }
 
-  function changeSemantic(next: boolean): void {
+  async function changeSemantic(next: boolean): Promise<void> {
+    if (next === semanticEnabled) return;
+    const previous = semanticEnabled;
     semanticEnabled = next;
+    if (editingId && activeEditor && !(await activeEditor.flush())) {
+      semanticEnabled = previous;
+      showToast('保存失败，已保留当前编辑内容，语义搜索设置没有改变。');
+      return;
+    }
+
+    editingId = null;
     writePreference('semantic', String(next));
     if (!next) {
       semanticHits = [];
       semanticSearching = false;
       window.clearTimeout(semanticTimer);
-    } else if (query.trim()) {
-      updateQuery(query);
+    }
+    if (activeQuery.trim()) {
+      applyQuery(activeQuery, true);
     }
   }
 
@@ -537,7 +615,9 @@
 
     <div class="mb-3 mt-3 flex min-h-5 items-center justify-between px-1 text-[11px] text-base-content/42">
       <span>
-        {#if query.trim()}
+        {#if querySaving}
+          正在保存当前笔记并切换搜索…
+        {:else if activeQuery.trim()}
           {visibleHits.length} 条匹配
           {#if semanticSearching} · 正在补充语义结果{/if}
         {:else}
@@ -563,9 +643,13 @@
       </div>
     {/if}
 
-    {#if query.trim()}
+    {#if activeQuery.trim()}
       <div class="mb-2">
-        <QuickCreateRow {query} selected={selectedIndex === 0} on:click={createFromQuery} />
+        <QuickCreateRow
+          query={activeQuery}
+          selected={isKeyboardOptionSelected(keyboardSelectionVisible, editingId, selectedIndex, 0)}
+          on:click={createFromQuery}
+        />
       </div>
     {/if}
 
@@ -573,13 +657,13 @@
       <div class="flex items-center justify-center gap-2 py-20 text-sm text-base-content/45">
         <LoaderCircle size={18} class="animate-spin" /> 正在读取云端笔记…
       </div>
-    {:else if visibleHits.length === 0 && !query.trim()}
+    {:else if visibleHits.length === 0 && !activeQuery.trim()}
       <div class="flex flex-col items-center py-20 text-center text-base-content/42">
         <SearchX size={30} strokeWidth={1.5} />
         <p class="mt-3 text-sm">还没有笔记</p>
         <button class="btn btn-primary btn-sm mt-4" on:click={createFromQuery}>创建第一条</button>
       </div>
-    {:else if visibleHits.length === 0 && query.trim()}
+    {:else if visibleHits.length === 0 && activeQuery.trim()}
       <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
         {#if semanticSearching}<Sparkles size={16} class="text-primary" /> 正在寻找语义相关内容…{:else}没有现有匹配，可以直接创建。{/if}
       </div>
@@ -594,17 +678,19 @@
                 {saveNote}
                 {deleteNote}
                 {uploadImage}
-                close={() => {
-                  editingId = null;
-                  focusSearchSoon();
-                }}
+                close={finishEditing}
               />
             {:else}
               <NoteCard
                 {hit}
-                {query}
-                optionIndex={index + (query.trim() ? 1 : 0)}
-                selected={selectedIndex === index + (query.trim() ? 1 : 0)}
+                query={activeQuery}
+                optionIndex={index + (activeQuery.trim() ? 1 : 0)}
+                selected={isKeyboardOptionSelected(
+                  keyboardSelectionVisible,
+                  editingId,
+                  selectedIndex,
+                  index + (activeQuery.trim() ? 1 : 0)
+                )}
                 on:edit={() => void beginEditing(hit.note.id)}
               />
             {/if}
@@ -620,9 +706,10 @@
     {semanticEnabled}
     {demoMode}
     endpoint={connection?.endpoint ?? ''}
+    createPairingCode={!demoMode && client ? () => client!.createPairingCode() : undefined}
     on:close={() => (settingsOpen = false)}
     on:sortchange={(event) => changeSort(event.detail)}
-    on:semanticchange={(event) => changeSemantic(event.detail)}
+    on:semanticchange={(event) => void changeSemantic(event.detail)}
     on:themechange={(event) => changeTheme(event.detail)}
     on:disconnect={() => void disconnect()}
   />

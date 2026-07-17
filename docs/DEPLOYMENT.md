@@ -22,7 +22,7 @@ macOS Tauri app ───────────────┐      PWA runnin
                               │ HTTPS + device session
 PWA ──────────────────────────┼────────► Worker API and /setup
                               │                 ├── D1: notes, devices, sessions, FTS
-setup/recovery browser page ──┘                 ├── R2: note images
+first-claim browser page ─────┘                 ├── R2: note images
                                                 ├── Workers AI: document/query embeddings
                                                 ├── Vectorize: cosine-similarity index
                                                 └── Queue: asynchronous indexing
@@ -342,12 +342,10 @@ Images are private user data. Store image metadata in D1 and bytes in the `IMAGE
 
 ### 6.1 Local worker development
 
-From the repository root, build and synchronize the latest same-origin PWA, then
-create the local development secret file with a long random value:
+From the repository root, build and synchronize the latest same-origin PWA:
 
 ```bash
 npm run build:cloud-pwa
-cp cloud/.dev.vars.example cloud/.dev.vars
 ```
 
 Then initialize the local D1 database and run Wrangler:
@@ -385,9 +383,9 @@ click Deploy to Cloudflare
   → sign in to Cloudflare
   → authorize/import the public GitHub or GitLab template
   → review names and requested resources
-  → set the owner setup/recovery secret
   → deploy
-  → open the resulting worker URL
+  → immediately open the resulting worker's /setup page
+  → explicitly claim the instance and copy the code shown once
 ```
 
 Cloudflare owns this deployment authorization flow. NotesFlash does not need an OAuth callback service and does not receive the user's Cloudflare or source-control token.
@@ -401,7 +399,7 @@ Before exposing the button publicly:
 3. Keep `cloud/` fully isolated with its own lockfile, `wrangler.jsonc`, migrations, Worker source, package metadata, and static assets.
 4. Ensure Wrangler declares Static Assets, D1, R2, Vectorize, Workers AI, Queue producer/consumer, and the scheduled trigger.
 5. Keep the deploy script's D1 migration command bound to `DB`, not a hard-coded database name or UUID.
-6. Keep `OWNER_SETUP_SECRET` in `.dev.vars.example`; `cloud/package.json` supplies the Deploy Button description and random-generation guidance.
+6. Confirm the template does not request a NotesFlash setup secret or another manually copied environment value.
 7. Run a clean deployment into a new Cloudflare account and verify Vectorize is created with 1024 dimensions and cosine distance.
 
 Example button Markdown:
@@ -430,35 +428,65 @@ wrangler deploy
 
 Use the binding name `DB`, not a hard-coded database UUID. A deployment that returns a Worker URL but has not run migrations is incomplete and must not display a pairing code.
 
-### 7.4 Owner setup secret
+### 7.4 First claim and pairing boundary
 
-`OWNER_SETUP_SECRET` protects the uninitialized instance from being claimed by the first person who discovers its URL. Generate a unique, high-entropy secret for each deployment. In this MVP it also acts as the break-glass credential that can create a new recovery pairing code when every normal device session has been lost. It must not be embedded in the frontend bundle or pairing code.
+NotesFlash no longer asks the user to create, copy, or retain an initialization
+environment variable. On a brand-new instance, `/setup` shows an explicit
+first-claim action. Loading the page is read-only; the user must click the button
+before the page calls `POST /api/setup`.
 
-After owner initialization:
+That first claim uses a single atomic D1 batch to create the instance state, an
+internal bootstrap identity, the image-signing key, a browser-claim hash, and the
+hash of a ten-minute one-time pairing code. The plaintext code is returned only
+in the successful response and displayed once. It is not recoverable from D1
+and cannot be reused after a successful exchange.
 
-- the worker records the initialized state in D1;
-- the public initialization action becomes unavailable;
-- normal device pairing uses short-lived pairing codes;
-- the setup secret can create a recovery pairing code but cannot erase or reinitialize the instance.
+Until the first real device finishes pairing, the claiming browser also holds a
+24-hour Secure/HttpOnly/SameSite=Strict bootstrap Cookie. D1 stores and enforces
+the matching server-side expiry. If the page is accidentally refreshed or the
+first code expires, only that same browser can explicitly generate a replacement;
+the Worker invalidates every previous unused bootstrap code before returning the
+new one. The old plaintext is never shown again. Losing both the page and that
+Cookie still requires Cloudflare/D1 break-glass recovery.
 
-Store this secret in a password manager. Anyone who knows it can authorize a new device through the recovery setup page. If it is exposed, rotate the Cloudflare Worker secret immediately and revoke any unfamiliar device sessions.
+This convenience has an explicit TOFU (trust on first use) tradeoff. Without a
+pre-shared secret, Cloudflare Access, or an external identity provider, the
+Worker cannot prove that the first browser clicking the button belongs to the
+Cloudflare account owner. Someone who discovers the fresh Worker URL and clicks
+first could claim it. The owner should therefore open `/setup` immediately after
+deployment. The explicit click, same-origin validation, rate limiting, atomic D1
+claim, and browser-bound continuation reduce the exposure but do not remove that
+first-visitor risk.
+
+After the first real device pairs:
+
+- the Worker revokes the internal bootstrap identity and deletes the browser-claim hash;
+- `/setup` cannot anonymously generate another code;
+- a connected device can generate a new short-lived code from the app's settings or authenticated `POST /api/pairing-codes`;
+- if all authenticated device tokens are lost, there is no application-level anonymous recovery route; the user's Cloudflare account and D1 administration are the break-glass boundary.
 
 The bootstrap endpoints are intentionally small and explicit:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/setup` | worker-hosted HTML setup/recovery page |
-| `GET` | `/api/setup/status` | returns initialization state and instance metadata |
-| `POST` | `/api/setup` | first initialization; returns the setup browser's owner device token |
-| `POST` | `/api/setup/pairing-code` | initialized-instance recovery; verifies the setup secret and returns a new pairing code |
+| `GET` | `/setup` | worker-hosted first-claim page; read-only until an explicit click |
+| `GET` | `/api/setup/status` | returns public initialization state and whether this browser may resume pending first-device setup |
+| `POST` | `/api/setup` | atomically performs the first claim, or replaces a pending first code for the same browser Cookie |
 | `POST` | `/api/pairing-codes` | authenticated normal-device flow for creating another pairing code |
 | `POST` | `/api/devices/pair` | consumes a pairing code and creates the new device session |
 
-On first initialization, the `/setup` page calls `/api/setup`, uses the returned setup-browser token only to call `/api/pairing-codes`, and displays the resulting code. On an initialized instance, it calls `/api/setup/pairing-code` instead. The macOS/PWA client does not receive or store `OWNER_SETUP_SECRET` in either case.
+The image URL HMAC key is also generated internally and stored in D1
+`instance_state`; it is never supplied to either client. New instances create it
+during the first claim. Existing instances upgraded from an older release create
+it lazily on first image-signing use if needed. After verifying pairing and
+signed image delivery on the upgraded release, administrators may delete the
+legacy `OWNER_SETUP_SECRET` Worker binding because it is no longer read.
 
 ### 7.5 Manual deployment fallback for maintainers
 
-The button is the product path, but a manual path is useful for development and recovery. From `cloud/`, the resource creation commands are conceptually:
+The button is the product path, but a manual path is useful for development and
+deployment diagnostics. From `cloud/`, the resource creation commands are
+conceptually:
 
 ```bash
 npm ci
@@ -469,7 +497,6 @@ npx wrangler vectorize create notesflash-vectors \
   --dimensions=1024 \
   --metric=cosine
 npx wrangler queues create notesflash-index
-npx wrangler secret put OWNER_SETUP_SECRET
 ```
 
 After creating resources, place the generated D1 ID and resource names into the local Wrangler configuration, then run:
@@ -491,14 +518,15 @@ The intended first-run flow is:
 2. User clicks the Deploy to Cloudflare link from the connection screen.
 3. Cloudflare deploys the user's Worker, PWA assets, and resources.
 4. User opens https://<instance>/setup.
-5. User proves possession of OWNER_SETUP_SECRET.
-6. If needed, the page initializes the owner setup-browser device; otherwise it uses the recovery pairing endpoint.
-7. The page creates a short-lived pairing code.
-8. The setup page displays the pairing code; the worker endpoint is the current browser origin.
-9. The user enters endpoint + pairing code in the macOS app.
-10. The app creates a device identity and exchanges the code for a session.
-11. The app stores only credentials/connection metadata, never note content. The MVP uses web storage; the hardened native release should use Keychain.
-12. The first authenticated notes request succeeds.
+5. The page reports that the instance is uninitialized and explains the TOFU first-visitor risk.
+6. User explicitly clicks “initialize and show one-time pairing code.”
+7. The Worker atomically claims the instance and creates a short-lived single-use code.
+8. The setup page displays the plaintext code once; the worker endpoint is the current browser origin.
+9. If the page is refreshed or the code expires, the same browser may generate a replacement; the previous code is invalidated.
+10. The user enters endpoint + pairing code in the macOS app before it expires.
+11. The app creates a device identity and exchanges the code for a session; successful pairing revokes the internal bootstrap identity and browser claim.
+12. The app stores only credentials/connection metadata, never note content. The MVP uses web storage; the hardened native release should use Keychain.
+13. The first authenticated notes request succeeds; every future pairing code must come from an authenticated connected device.
 ```
 
 Pairing codes must be:
@@ -513,18 +541,19 @@ Pairing codes must be:
 ### 8.2 Adding the phone PWA
 
 Open `https://<instance>.workers.dev/` in iPhone Safari and add it to the Home
-Screen. The installed PWA pre-fills its own origin as the Worker endpoint. Open
-`/setup`, prove possession of `OWNER_SETUP_SECRET`, generate a short-lived code,
-return to the PWA, and enter the code. The authenticated API also supports
-`POST /api/pairing-codes`; a future device-management UI can expose that normal
-flow without asking for the recovery secret. A later hardening release can
+Screen. The installed PWA pre-fills its own origin as the Worker endpoint. On an
+already initialized instance, use the settings page on any connected Mac or PWA
+to generate a short-lived code through authenticated `POST /api/pairing-codes`,
+then enter that code on the new phone. An initialized `/setup` page may use an
+existing same-origin authenticated session for the same operation, but an
+anonymous visitor cannot generate a code. A later hardening release can
 replace JavaScript-readable bearer storage with a same-origin HttpOnly cookie
 and add QR scanning as a convenience.
 
 Per-device pairing provides a consistent device-management model:
 
 ```text
-worker /setup creates pairing code
+authenticated connected device creates pairing code
   → phone PWA enters endpoint + code
   → worker creates a distinct phone device/session
   → user can later revoke the phone without revoking the Mac
@@ -557,7 +586,7 @@ The worker stores only a hash of each long-lived opaque session token. The curre
 - Installing the PWA on another phone creates a new device session, not a new Cloudflare backend.
 - “Disconnect this device” flushes the active editor, calls `POST /api/auth/logout`, and then removes the local profile; if the Worker is unreachable, local disconnect still completes after the four-second request timeout.
 - A remotely revoked device receives `401 AUTH_REQUIRED` on its next API request and must disconnect/re-pair locally.
-- Losing every authenticated device requires an owner recovery method established during setup. The NotesFlash publisher cannot recover a self-hosted user's data or session.
+- Losing every authenticated device token leaves no anonymous in-app recovery path. The user must use Cloudflare/D1 administration as a break-glass procedure; the NotesFlash publisher cannot recover a self-hosted user's data or session.
 - A pairing code is not a backup or recovery code.
 
 ## 9. Post-deployment acceptance test
@@ -567,24 +596,27 @@ Run this checklist against a brand-new Cloudflare account or an isolated test ac
 1. Deploy from the public button without using Wrangler locally.
 2. Confirm Static Assets, D1, R2, Vectorize, Workers AI, Queue, and Worker bindings exist; verify the root URL serves the PWA.
 3. Confirm all D1 migrations were applied.
-4. Confirm `/setup` rejects an incorrect owner secret.
-5. Initialize once and confirm a second initialization attempt is rejected.
-6. Pair the macOS app using only endpoint + one-time code.
-7. Relaunch the app and confirm the saved connection session reconnects without persisting note content.
-8. Press `Command + Shift + Space`; confirm the existing window appears and the search input receives focus.
-9. Close the window, press the shortcut, and confirm the process was hidden rather than destroyed.
-10. Create a plain-text note; confirm the save response does not wait for embedding and still succeeds if Queue is temporarily unavailable.
-11. Search by an exact character substring and confirm the lexical result appears.
-12. Wait for indexing and search with a semantically similar phrase; confirm Vectorize augments the result and tune `SEMANTIC_MIN_SCORE` if `0.45` is too broad or too strict.
-13. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
-14. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
-15. Install the PWA from Safari and repeat read/search/image tests in standalone mode.
-16. Reuse a consumed pairing code and confirm it fails.
-17. Call `GET /api/devices`, revoke the phone with `DELETE /api/devices/:id`, and confirm its next request is rejected without affecting the Mac.
-18. Disconnect a test device, confirm `POST /api/auth/logout` returns success, and confirm reuse of the same token returns `401 AUTH_REQUIRED`.
-19. Send invalid pairing attempts until the configured window returns `429 RATE_LIMITED`.
-20. Cause a stale note update with a different image list; confirm it returns `409 VERSION_CONFLICT` and the winning note's images remain unchanged.
-21. Temporarily disable or exhaust semantic indexing and confirm character search and note saving still work.
+4. Load `/setup` and confirm the GET alone does not initialize the instance or reveal a pairing code.
+5. Click the first-claim action and record the one-time code. Refresh the same browser, generate a replacement, and confirm the previous code is invalidated rather than shown again.
+6. Confirm a fresh browser without the HttpOnly bootstrap Cookie cannot replace the first code.
+7. Pair the macOS app using only endpoint + the current one-time code; confirm `/setup` permanently closes the browser-bootstrap path after pairing.
+8. Relaunch the app and confirm the saved connection session reconnects without persisting note content.
+9. Press `Command + Shift + Space`; confirm the existing window appears and the search input receives focus.
+10. Close the window, press the shortcut, and confirm the process was hidden rather than destroyed.
+11. Create a plain-text note; confirm the save response does not wait for embedding and still succeeds if Queue is temporarily unavailable.
+12. Search by an exact character substring and confirm the lexical result appears.
+13. Wait for indexing and search with a semantically similar phrase; confirm Vectorize augments the result and tune `SEMANTIC_MIN_SCORE` if `0.45` is too broad or too strict.
+14. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
+15. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
+16. Install the PWA from Safari and repeat read/search/image tests in standalone mode.
+17. Reuse a consumed pairing code and confirm it fails.
+18. Confirm an anonymous initialized `/setup` request cannot generate a new code, then create one from an authenticated connected device and pair the phone.
+19. Call `GET /api/devices`, revoke the phone with `DELETE /api/devices/:id`, and confirm its next request is rejected without affecting the Mac.
+20. Disconnect a test device, confirm `POST /api/auth/logout` returns success, and confirm reuse of the same token returns `401 AUTH_REQUIRED`.
+21. Send invalid pairing attempts until the configured window returns `429 RATE_LIMITED`.
+22. Upload/view an image and confirm its signed URL works without any user-supplied signing environment variable.
+23. Cause a stale note update with a different image list; confirm it returns `409 VERSION_CONFLICT` and the winning note's images remain unchanged.
+24. Temporarily disable or exhaust semantic indexing and confirm character search and note saving still work.
 
 ## 10. Release boundaries for this MVP
 

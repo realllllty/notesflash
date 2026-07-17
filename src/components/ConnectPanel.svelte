@@ -70,11 +70,21 @@
       <ExternalLink size={14} class="opacity-55" />
     </a>
 
-    <div class="divider my-4 text-[11px] text-base-content/35">部署完成后配对</div>
+    <div class="rounded-box bg-base-200/55 p-3 text-xs leading-5 text-base-content/58">
+      <p class="font-medium text-base-content/75">配对码从哪里获取？</p>
+      <p class="mt-1">
+        第一次部署后打开 Worker 的 <span class="font-mono">/setup</span>，点击初始化即可直接看到首个一次性配对码，不需要填写额外的环境变量。
+      </p>
+      <p class="mt-1">
+        以后添加设备，请在任意已连接设备的「设置」中生成新码；初始化完成后，匿名网页不能再次发码。
+      </p>
+    </div>
+
+    <div class="divider my-4 text-[11px] text-base-content/35">填写地址与配对码</div>
 
     {#if setupUrl}
       <a class="btn btn-ghost btn-sm mb-3 w-full gap-2" href={setupUrl} target="_blank" rel="noreferrer">
-        生成或恢复一次性配对码
+        首次部署：打开一次性初始化页面
         <ExternalLink size={13} class="opacity-55" />
       </a>
     {/if}

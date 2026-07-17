@@ -9,7 +9,6 @@ export interface Env {
   AI: AiBinding;
   INDEX_QUEUE: Queue<IndexJob>;
 
-  OWNER_SETUP_SECRET?: string;
   INSTANCE_NAME?: string;
   ALLOWED_ORIGINS?: string;
   EMBEDDING_MODEL?: string;

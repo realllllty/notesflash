@@ -22,8 +22,8 @@ not receive note text, images, device tokens, embeddings, or search queries.
 - R2 for private image objects. Images are served through the Worker using either
   device authentication or a short-lived HMAC capability URL.
 - Optimistic note versions and HTTP `409 VERSION_CONFLICT` responses.
-- One-time owner setup secret, rate-limited one-time pairing codes, logout/session
-  revocation, and hashed device tokens.
+- Explicit first-claim initialization, rate-limited one-time pairing codes,
+  logout/session revocation, and hashed device tokens.
 - CORS, consistent JSON errors, request IDs, input limits, idempotent note
   creation, and scheduled retry/cleanup.
 
@@ -65,10 +65,11 @@ The intended guided-deployment experience is:
 
 1. The user signs in to Cloudflare and authorizes the public template.
 2. Cloudflare creates/binds the Worker resources declared in `wrangler.jsonc`.
-3. The user supplies `OWNER_SETUP_SECRET` as a Worker secret.
-4. Workers Builds runs `npm install` and `npm run deploy`.
-5. The resulting Worker root serves the PWA; `/setup` accepts the secret and
-   creates a pairing code for the PWA or macOS client.
+3. Workers Builds runs `npm install` and `npm run deploy`; no NotesFlash setup
+   secret or manually copied environment variable is required.
+4. The resulting Worker root serves the PWA. The owner immediately opens
+   `/setup`, explicitly claims the uninitialized instance, and receives the
+   first short-lived one-time pairing code.
 
 Cloudflare's deployment UI evolves over time. If a binding is not auto-created
 by the current Deploy Button flow, use the manual provisioning commands below.
@@ -85,7 +86,6 @@ npx wrangler d1 create notesflash-db
 npx wrangler r2 bucket create notesflash-images
 npx wrangler queues create notesflash-index
 npx wrangler vectorize create notesflash-vectors --dimensions=1024 --metric=cosine
-npx wrangler secret put OWNER_SETUP_SECRET
 ```
 
 Replace the placeholder `database_id` in `wrangler.jsonc` with the ID printed by
@@ -117,7 +117,6 @@ npm run build:cloud-pwa
 Then run the Worker from `cloud/`:
 
 ```bash
-cp .dev.vars.example .dev.vars
 npm install
 npm run db:migrate:local
 npm run dev
@@ -125,7 +124,7 @@ npm run dev
 
 Local D1 and R2 emulation are useful for CRUD and image tests. Workers AI and
 Vectorize behavior is best verified with an authenticated remote development
-session. Never commit `.dev.vars`.
+session. The default flow does not require a `.dev.vars` file.
 
 Run the type check:
 
@@ -143,7 +142,6 @@ npm run check
 | `AI` | Workers AI binding | required for semantic search |
 | `INDEX_QUEUE` | Queue producer/consumer | required for async indexing |
 | `ASSETS` | same-origin PWA static assets | `./public` |
-| `OWNER_SETUP_SECRET` | one-time owner bootstrap proof | required secret |
 | `INSTANCE_NAME` | display name | `NotesFlash Cloud` |
 | `ALLOWED_ORIGINS` | comma-separated origins or `*` | `*` |
 | `EMBEDDING_MODEL` | Workers AI model | `@cf/baai/bge-m3` |
@@ -166,37 +164,12 @@ send an `Origin` header are not affected by browser CORS.
 GET /api/setup/status
 ```
 
-### 2. Initialize the first device
+An uninitialized response reports `initialized: false`. While the first real
+device is still pending, the claiming browser also receives
+`canResumeSetup: true`; other browsers receive `false`. The public response does
+not reveal private instance metadata.
 
-```http
-POST /api/setup
-Content-Type: application/json
-
-{
-  "setupSecret": "the secret configured during deployment",
-  "deviceName": "Alice's MacBook",
-  "platform": "macos"
-}
-```
-
-Response:
-
-```json
-{
-  "token": "opaque-device-token",
-  "instanceId": "uuid",
-  "deviceId": "uuid"
-}
-```
-
-`POST /api/setup` permanently refuses a second initialization once
-`instance_id` exists. The configured secret remains a Cloudflare Worker secret
-and is never returned by the API. It is also the instance's emergency recovery
-credential: `/setup` can use it after initialization to generate a fresh pairing
-code. Store it in a password manager and rotate the Cloudflare secret if it is
-ever exposed.
-
-### Browser bootstrap page
+### 2. Claim an uninitialized instance
 
 After deployment, open:
 
@@ -204,19 +177,14 @@ After deployment, open:
 https://<worker-name>.<account-subdomain>.workers.dev/setup
 ```
 
-The page is served directly by this Worker; no NotesFlash-operated website or
-OAuth callback is involved. On an uninitialized instance it calls `/api/setup`,
-uses the returned bootstrap token once to call `/api/pairing-codes`, and displays
-the code. On an initialized instance it calls:
+The page is served directly by this Worker; no NotesFlash-operated website,
+OAuth callback, or copied Cloudflare credential is involved. It does not claim
+the instance merely because somebody loads the page. The owner must explicitly
+click the first-claim button, which calls:
 
 ```http
-POST /api/setup/pairing-code
+POST /api/setup
 Content-Type: application/json
-
-{
-  "setupSecret": "the deployment secret",
-  "deviceName": "NotesFlash for Mac"
-}
 ```
 
 Response:
@@ -229,16 +197,52 @@ Response:
 }
 ```
 
+The claim, internal bootstrap identity, image-signing key, browser-claim hash,
+and first pairing-code hash are created atomically in D1. The plaintext code
+appears only in this response, expires after ten minutes, and can be consumed
+once. The same code is never revealed again. Until the first real device pairs,
+the same browser holds a 24-hour HttpOnly, SameSite=Strict bootstrap cookie and
+may explicitly generate a replacement code; D1 enforces the same server-side
+expiry, and replacement invalidates every earlier unused bootstrap code. Losing
+that cookie still requires Cloudflare/D1 recovery.
+
+After D1 `instance_id` has been created, `POST /api/setup` refuses every browser
+except the holder of that bootstrap cookie, and that holder can only replace the
+still-pending first code. Pairing the first real device revokes the internal
+bootstrap identity and deletes the browser-claim hash, permanently closing this
+path. This is a TOFU (trust on first use) boundary: without an external identity
+provider or pre-shared secret, a person who learns the fresh Worker URL and
+clicks the claim button before the owner could claim the instance first. The
+intended mitigation is to open `/setup` immediately after deployment. The
+explicit click, same-origin checks, rate limiting, atomic D1 claim, and
+browser-bound continuation narrow this window but cannot cryptographically
+eliminate it.
+
 ### 3. Pair another device
 
-The authenticated Mac creates a ten-minute one-time code:
+Use the first code to pair the macOS app or same-origin PWA:
+
+```http
+POST /api/devices/pair
+Content-Type: application/json
+
+{
+  "code": "NF-ABCDE-23456",
+  "deviceName": "Alice's MacBook",
+  "platform": "macos"
+}
+```
+
+After the first real device pairs, an anonymous `/setup` visitor can never create
+another code. A connected device must authenticate and create a fresh
+ten-minute, one-time code from the app's settings or directly through:
 
 ```http
 POST /api/pairing-codes
 Authorization: Bearer <mac-token>
 ```
 
-The PWA submits it:
+The new device submits that code to the same pairing endpoint:
 
 ```http
 POST /api/devices/pair
@@ -259,8 +263,14 @@ in D1. A paired device sends:
 Authorization: Bearer <token>
 ```
 
-Setup and recovery are limited to 10 attempts per IP per 15-minute window;
+Initial-claim attempts are limited to 5 per IP per 15-minute window;
 pairing-code exchange is limited to 30 attempts per IP per 10-minute window.
+
+There is deliberately no anonymous application-level recovery credential. If
+every authenticated device token is lost, the user's Cloudflare account and D1
+administration are the break-glass recovery boundary; the NotesFlash publisher
+cannot restore access to a self-hosted instance. A pairing code is not a backup
+or recovery code.
 
 ## Client API contract
 
@@ -371,8 +381,10 @@ DELETE /api/images/:id
 Image assets returned inside a note include a 24-hour HMAC-signed URL, so the PWA
 can use an ordinary `<img src>` without exposing its Bearer token. A direct
 Bearer-authenticated `GET /api/images/:id` also works. Refreshing the note/list
-renews the signed URL. The HMAC currently derives from `OWNER_SETUP_SECRET`, so
-rotating that secret immediately invalidates old image URLs.
+renews the signed URL. The HMAC key is generated internally and stored in the
+user's D1 `instance_state`; it is not supplied by the user or embedded in a
+client. New instances create it during the atomic first claim. An upgraded
+existing instance lazily creates it on first use if it is missing.
 
 ### Search
 
@@ -447,11 +459,18 @@ never rolls back or misreports a committed D1 note mutation.
   necessarily exists in process memory.
 - Device tokens are high-entropy opaque values; only their SHA-256 hashes are
   stored in D1.
-- Revoke a lost device with `DELETE /api/devices/:id` from another paired device.
+- Revoke a lost device with `DELETE /api/devices/:id` from another paired device;
+  the same transaction revokes its sessions and invalidates its unused pairing codes.
 - Pairing/setup endpoints use fixed-window D1 rate limits keyed by a hash of the
   Cloudflare client address and never persist the raw address.
-- Keep `OWNER_SETUP_SECRET` long and random even though setup is disabled after
-  initialization.
+- Treat the uninitialized Worker URL as sensitive until the owner completes the
+  explicit first claim; this is a TOFU window, not proof of Cloudflare-account
+  ownership.
+- After initialization, only authenticated devices can issue new pairing codes.
+  If all device tokens are lost, recovery requires Cloudflare/D1 administration.
+- Deployments upgraded from the older secret-based flow may remove the legacy
+  `OWNER_SETUP_SECRET` Worker binding after verifying setup, pairing, and signed
+  image delivery on the upgraded version.
 
 ## MVP limitations
 

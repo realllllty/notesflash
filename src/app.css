@@ -9,18 +9,18 @@
   name: "notesflash";
   default: true;
   color-scheme: light;
-  --color-base-100: oklch(98.4% 0.004 86);
-  --color-base-200: oklch(96.4% 0.006 86);
-  --color-base-300: oklch(91.5% 0.008 86);
-  --color-base-content: oklch(24% 0.012 72);
-  --color-primary: oklch(54% 0.19 257);
+  --color-base-100: oklch(98.5% 0.003 255);
+  --color-base-200: oklch(96.6% 0.004 255);
+  --color-base-300: oklch(91.8% 0.006 255);
+  --color-base-content: oklch(23% 0.01 255);
+  --color-primary: oklch(55% 0.105 256);
   --color-primary-content: oklch(98% 0.01 257);
-  --color-secondary: oklch(88% 0.04 255);
-  --color-secondary-content: oklch(34% 0.11 257);
-  --color-accent: oklch(88% 0.08 155);
-  --color-accent-content: oklch(30% 0.08 155);
-  --color-neutral: oklch(31% 0.015 72);
-  --color-neutral-content: oklch(96% 0.004 86);
+  --color-secondary: oklch(89% 0.022 255);
+  --color-secondary-content: oklch(34% 0.07 257);
+  --color-accent: oklch(88% 0.045 158);
+  --color-accent-content: oklch(30% 0.055 158);
+  --color-neutral: oklch(29% 0.012 255);
+  --color-neutral-content: oklch(96% 0.003 255);
   --color-info: oklch(69% 0.14 232);
   --color-success: oklch(67% 0.14 151);
   --color-warning: oklch(78% 0.15 77);
@@ -37,18 +37,18 @@
   name: "notesflash-dark";
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: oklch(18% 0.008 72);
-  --color-base-200: oklch(21% 0.009 72);
-  --color-base-300: oklch(27% 0.01 72);
-  --color-base-content: oklch(92% 0.007 86);
-  --color-primary: oklch(70% 0.15 257);
+  --color-base-100: oklch(17.5% 0.006 255);
+  --color-base-200: oklch(21% 0.007 255);
+  --color-base-300: oklch(27% 0.009 255);
+  --color-base-content: oklch(92% 0.006 255);
+  --color-primary: oklch(71% 0.095 256);
   --color-primary-content: oklch(18% 0.03 257);
-  --color-secondary: oklch(31% 0.05 257);
-  --color-secondary-content: oklch(87% 0.06 257);
-  --color-accent: oklch(36% 0.07 155);
-  --color-accent-content: oklch(90% 0.06 155);
-  --color-neutral: oklch(87% 0.008 86);
-  --color-neutral-content: oklch(20% 0.008 72);
+  --color-secondary: oklch(31% 0.032 257);
+  --color-secondary-content: oklch(87% 0.04 257);
+  --color-accent: oklch(35% 0.045 158);
+  --color-accent-content: oklch(90% 0.04 158);
+  --color-neutral: oklch(87% 0.006 255);
+  --color-neutral-content: oklch(20% 0.007 255);
   --color-info: oklch(72% 0.13 232);
   --color-success: oklch(72% 0.13 151);
   --color-warning: oklch(81% 0.14 77);
@@ -70,7 +70,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --app-max-width: 760px;
+  --app-max-width: 720px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -90,9 +90,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow-x: hidden;
-  background:
-    radial-gradient(circle at top, color-mix(in oklab, var(--color-primary) 5%, transparent), transparent 34rem),
-    var(--color-base-100);
+  background: var(--color-base-100);
 }
 
 button,
@@ -118,9 +116,9 @@ button,
 }
 
 .surface {
-  background: color-mix(in oklab, var(--color-base-100) 94%, transparent);
-  border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
-  backdrop-filter: blur(18px);
+  background: color-mix(in oklab, var(--color-base-100) 97%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  backdrop-filter: blur(20px);
 }
 
 .focus-ring:focus-visible {

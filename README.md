@@ -52,7 +52,6 @@ npm install
 npm run build:cloud-pwa
 cd cloud
 npm install
-cp .dev.vars.example .dev.vars
 npm run db:migrate:local
 npm run dev
 ```
@@ -69,21 +68,25 @@ https://deploy.workers.cloudflare.com/?url=https://github.com/realllllty/notesfl
 
 Cloudflare 当前支持把完全隔离的 GitHub 子目录作为 Deploy Button 模板；`cloud/` 已包含自己的依赖、Worker 源码、migration 和预构建 PWA，因此可以独立导入。Cloudflare 会读取 `wrangler.jsonc`，自动配置 Worker Static Assets、D1、R2、Workers AI、Vectorize 和 Queue。`cloud/package.json` 的 `deploy` 脚本会先按 binding 名运行远程 D1 migration。
 
-部署时必须设置一个足够长的 `OWNER_SETUP_SECRET`。部署完成后，同一个地址就是手机端 PWA：
+部署过程不要求用户填写 NotesFlash 的环境变量或初始化 Secret。部署完成后，同一个地址就是手机端 PWA：
 
 ```text
 https://<your-worker>.workers.dev/
 ```
 
-初始化或恢复配对访问：
+首次初始化和领取配对码：
 
 ```text
 https://<your-worker>.workers.dev/setup
 ```
 
-输入 Secret 后生成十分钟有效的配对码。PWA 会自动预填当前 Worker 地址；macOS 客户端只需填写同一地址和配对码。手机用户随后在 Safari 中选择“添加到主屏幕”，不需要第二个 Pages 项目或 App Store 应用。
+在尚未初始化的实例中，用户需要在 `/setup` 明确点击“初始化并显示一次性配对码”。Worker 会原子地认领实例，并只在这次响应中显示一个十分钟有效、单次使用的配对码；D1 仅保存它的哈希。PWA 会自动预填当前 Worker 地址，macOS 客户端只需填写同一地址和配对码。手机用户随后在 Safari 中选择“添加到主屏幕”，不需要第二个 Pages 项目或 App Store 应用。
 
-`OWNER_SETUP_SECRET` 同时是紧急恢复配对凭据，应保存到密码管理器中；泄漏后需要在 Cloudflare 中轮换。
+同一个配对码的明文不会再次显示。如果用户误刷新页面或首个码过期，在首台真实设备尚未完成配对时，同一浏览器可凭 24 小时有效的 HttpOnly 初始化 Cookie 生成替代码；D1 同时校验服务端过期时间，生成替代码会立即让旧码失效。Cookie 丢失后不会向其他匿名浏览器开放恢复入口。
+
+这个无 Secret 的首次认领采用 TOFU（首次使用即信任）模型：部署者应在部署完成后立即打开 `/setup` 并点击认领；在此之前，任何先访问该地址并主动点击认领的人都有可能抢先占用实例。首台真实设备配对完成后，浏览器初始化凭据立即失效，后续配对码只能由已经连接并通过认证的设备在设置中生成。
+
+如果所有设备 token 都丢失，当前 MVP 没有面向应用的匿名恢复入口；用户只能通过自己的 Cloudflare 账号和 D1 管理能力进行 break-glass 恢复。图片 URL 的签名密钥由 Worker 自动生成并保存在用户自己的 D1 中，不需要环境变量。旧部署升级并验证图片访问和配对正常后，可以删除遗留的 `OWNER_SETUP_SECRET` Worker binding。
 
 删除笔记会先进入 30 天的后端可恢复期（当前恢复入口是 API）；向量清理完成并超过保留期后，Cron 会永久删除 D1 正文和关联的 R2 图片。可通过 `TRASH_RETENTION_DAYS` 调整。
 

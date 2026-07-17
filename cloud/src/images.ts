@@ -1,5 +1,5 @@
 import { constantTimeEqual, hmacSha256Base64Url, newId } from "./crypto";
-import { imageAccessUrl, imageRowToAsset } from "./db";
+import { getInstanceId, imageAccessUrl, imageRowToAsset, imageSigningKey } from "./db";
 import { AppError, json, requirePrincipal } from "./http";
 import type { ImageRow, RequestContext } from "./types";
 
@@ -83,11 +83,13 @@ export async function uploadImage(context: RequestContext): Promise<Response> {
 
 export async function getImage(context: RequestContext, imageId: string): Promise<Response> {
   if (!context.principal) {
+    if (!(await getInstanceId(context.env))) {
+      throw new AppError(401, "IMAGE_AUTH_REQUIRED", "A valid image signature is required.");
+    }
     const expires = Number.parseInt(context.url.searchParams.get("expires") ?? "", 10);
     const signature = context.url.searchParams.get("signature") ?? "";
-    const secret = context.env.OWNER_SETUP_SECRET;
+    const secret = await imageSigningKey(context.env);
     if (
-      !secret ||
       !Number.isFinite(expires) ||
       expires < Date.now() ||
       expires > Date.now() + 25 * 60 * 60 * 1000

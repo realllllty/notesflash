@@ -47,6 +47,11 @@ export interface PairingResponse {
   deviceId?: string;
 }
 
+export interface PairingCode {
+  code: string;
+  expiresAt: number;
+}
+
 export interface CreateNoteInput {
   title: string;
   body: string;
@@ -62,6 +67,7 @@ export interface UpdateNoteInput {
 
 export interface NotesClient {
   logout(): Promise<void>;
+  createPairingCode(): Promise<PairingCode>;
   listNotes(sort: SortMode, onProgress?: (notes: Note[]) => void): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, input: UpdateNoteInput): Promise<Note>;

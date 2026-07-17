@@ -10,24 +10,28 @@ export function setupPage(): Response {
     :root { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color-scheme: light dark; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f5f2; color: #20201e; padding: 24px; }
-    main { width: min(100%, 440px); background: rgba(255,255,255,.92); border: 1px solid #deddd8; border-radius: 20px; padding: 28px; box-shadow: 0 16px 48px rgba(20,20,18,.08); }
+    main { width: min(100%, 460px); background: rgba(255,255,255,.94); border: 1px solid #deddd8; border-radius: 20px; padding: 28px; box-shadow: 0 16px 48px rgba(20,20,18,.08); }
     h1 { margin: 0 0 8px; font-size: 24px; letter-spacing: -.02em; }
-    p { color: #676661; line-height: 1.55; }
-    label { display: block; font-size: 13px; font-weight: 650; margin: 20px 0 7px; }
-    input { width: 100%; height: 44px; border: 1px solid #cfcec8; border-radius: 11px; padding: 0 13px; background: transparent; color: inherit; font: inherit; }
-    input:focus { outline: 3px solid rgba(67,104,214,.18); border-color: #4368d6; }
-    button { width: 100%; height: 44px; border: 0; border-radius: 11px; margin-top: 18px; background: #20201e; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    p { color: #676661; line-height: 1.6; }
+    button, .link { min-height: 44px; border-radius: 11px; font: inherit; font-weight: 700; cursor: pointer; }
+    button { width: 100%; border: 0; margin-top: 18px; background: #20201e; color: #fff; padding: 10px 14px; }
+    button.secondary { width: auto; min-height: 36px; margin: 10px 0 0; padding: 7px 12px; background: transparent; color: inherit; border: 1px solid #cfcec8; font-size: 13px; }
     button:disabled { opacity: .5; cursor: wait; }
-    #result { display: none; margin-top: 22px; border-top: 1px solid #e5e4df; padding-top: 20px; }
-    .code { display: block; padding: 18px; border-radius: 13px; background: #f0efe9; text-align: center; font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; user-select: all; }
+    .notice { margin-top: 18px; border: 1px solid #e8c870; border-radius: 13px; padding: 12px 14px; background: #fff8db; color: #6a5010; font-size: 13px; line-height: 1.55; }
+    .muted { font-size: 13px; }
+    #action, #result { display: none; }
+    #result { margin-top: 22px; border-top: 1px solid #e5e4df; padding-top: 20px; }
+    .code { display: block; padding: 18px 10px; border-radius: 13px; background: #f0efe9; text-align: center; font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; user-select: all; overflow-wrap: anywhere; }
     .meta { font-size: 12px; overflow-wrap: anywhere; }
-    .error { color: #b42318; font-size: 13px; min-height: 20px; }
+    .error { color: #b42318; font-size: 13px; min-height: 20px; margin-top: 12px; }
+    .link { display: inline-flex; align-items: center; justify-content: center; width: 100%; margin-top: 12px; border: 1px solid #cfcec8; color: inherit; text-decoration: none; }
     @media (prefers-color-scheme: dark) {
       body { background: #111210; color: #edede9; }
       main { background: #1a1b18; border-color: #30312d; box-shadow: none; }
       p { color: #aaa9a2; }
-      input { border-color: #41423d; }
       button { background: #edede9; color: #171714; }
+      button.secondary, .link { border-color: #41423d; color: #edede9; }
+      .notice { border-color: #715d25; background: #2c2717; color: #ead58d; }
       #result { border-color: #30312d; }
       .code { background: #252622; }
     }
@@ -37,85 +41,151 @@ export function setupPage(): Response {
   <main>
     <h1>连接 NotesFlash Cloud</h1>
     <p id="intro">正在检查实例状态……</p>
-    <form id="form">
-      <label for="secret">Owner Setup Secret</label>
-      <input id="secret" name="secret" type="password" autocomplete="current-password" required minlength="12" placeholder="部署时设置的高权限秘密">
-      <label for="name">这台 Mac 的名称</label>
-      <input id="name" name="name" value="NotesFlash for Mac" maxlength="100" required>
-      <button id="submit" type="submit">生成配对码</button>
+
+    <section id="action">
+      <div id="notice" class="notice"></div>
+      <button id="generate" type="button"></button>
       <div id="error" class="error" role="alert"></div>
-    </form>
+    </section>
+
     <section id="result" aria-live="polite">
-      <p>在 macOS 客户端中输入下面的一次性配对码：</p>
+      <p>这是一个 10 分钟有效、只能使用一次的配对码：</p>
       <output id="code" class="code"></output>
+      <button id="copy" class="secondary" type="button">复制配对码</button>
       <p id="expiry" class="meta"></p>
-      <p id="instance" class="meta"></p>
+      <p class="muted">请现在把它输入要连接的 NotesFlash。刷新或关闭本页后，服务器不会再次显示这个明文配对码。</p>
+      <a class="link" href="/">打开 NotesFlash</a>
     </section>
   </main>
   <script>
-    const form = document.querySelector('#form');
+    const action = document.querySelector('#action');
     const intro = document.querySelector('#intro');
-    const submit = document.querySelector('#submit');
+    const notice = document.querySelector('#notice');
+    const generate = document.querySelector('#generate');
     const errorBox = document.querySelector('#error');
     const result = document.querySelector('#result');
-    let initialized = true;
+    const codeOutput = document.querySelector('#code');
+    const expiry = document.querySelector('#expiry');
+    let mode = 'unavailable';
+    let deviceToken = '';
 
-    async function api(path, options = {}) {
-      const response = await fetch(path, { cache: 'no-store', ...options });
+    async function api(path, options) {
+      const response = await fetch(path, { cache: 'no-store', ...(options || {}) });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error?.message || '请求失败');
+      if (!response.ok) {
+        const error = new Error(payload && payload.error && payload.error.message || '请求失败');
+        error.status = response.status;
+        throw error;
+      }
       return payload;
     }
 
-    api('/api/setup/status').then((status) => {
-      initialized = status.initialized;
-      intro.textContent = initialized
-        ? '实例已经初始化。输入部署时设置的 Secret，生成一个 10 分钟有效的恢复配对码。'
-        : '输入部署时设置的 Secret。页面将初始化实例，并生成一个 10 分钟有效的配对码。';
-      submit.textContent = initialized ? '生成配对码' : '初始化并生成配对码';
-    }).catch((error) => { intro.textContent = error.message; });
+    function localDeviceToken() {
+      try {
+        const profile = JSON.parse(localStorage.getItem('notesflash.connection.v1') || 'null');
+        if (!profile || typeof profile.token !== 'string' || typeof profile.endpoint !== 'string') return '';
+        const endpoint = profile.endpoint.replace(/\/+$/, '');
+        return endpoint === location.origin ? profile.token : '';
+      } catch {
+        return '';
+      }
+    }
 
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      submit.disabled = true;
+    function showCode(pairing) {
+      codeOutput.textContent = pairing.code;
+      expiry.textContent = '有效期至：' + new Date(pairing.expiresAt).toLocaleString();
+      result.style.display = 'block';
+      codeOutput.scrollIntoView({ block: 'nearest' });
+    }
+
+    async function loadStatus() {
+      try {
+        const status = await api('/api/setup/status');
+        action.style.display = 'block';
+        generate.style.display = '';
+        if (!status.initialized) {
+          mode = 'initial';
+          intro.textContent = '实例尚未初始化。无需填写任何环境变量或部署密钥。';
+          notice.textContent = '只在你刚完成 Cloudflare 部署时点击。因为这里没有中心账号或 OAuth，第一位领取配对码的人会成为首台受信任设备。';
+          generate.textContent = '初始化并显示一次性配对码';
+          return;
+        }
+
+        if (status.canResumeSetup) {
+          mode = 'resume';
+          intro.textContent = '首次设备还没有完成配对。这个浏览器可以继续初始化流程。';
+          notice.textContent = '重新生成会立即让此前尚未使用的首次配对码失效，并显示一个新的单次配对码。';
+          generate.textContent = '重新生成首次配对码';
+        } else {
+          deviceToken = localDeviceToken();
+          if (deviceToken) {
+            mode = 'connected';
+            intro.textContent = '实例已经初始化，这个浏览器也是已连接设备。';
+            notice.textContent = '你可以为另一台设备生成一个新的单次配对码。';
+            generate.textContent = '为新设备生成配对码';
+          } else {
+            mode = 'unavailable';
+            intro.textContent = '实例已经初始化。匿名网页不能再次生成配对码。';
+            notice.textContent = '请在任意已连接的 NotesFlash 中打开“设置 → 连接新设备”，再生成新的配对码。这样知道 Worker 地址的陌生人无法读取你的笔记。';
+            generate.style.display = 'none';
+          }
+        }
+      } catch (error) {
+        intro.textContent = error instanceof Error ? error.message : '无法读取实例状态。';
+      }
+    }
+
+    generate.addEventListener('click', async () => {
+      if (mode === 'unavailable') return;
+      generate.disabled = true;
       errorBox.textContent = '';
       result.style.display = 'none';
-      const setupSecret = document.querySelector('#secret').value;
-      const deviceName = document.querySelector('#name').value;
       try {
-        let pairing;
-        let instanceId;
-        if (!initialized) {
-          const setup = await api('/api/setup', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ setupSecret, deviceName: 'Setup browser', platform: 'setup-web' })
-          });
-          instanceId = setup.instanceId;
-          pairing = await api('/api/pairing-codes', {
-            method: 'POST',
-            headers: { authorization: 'Bearer ' + setup.token }
-          });
-          initialized = true;
-        } else {
-          pairing = await api('/api/setup/pairing-code', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ setupSecret, deviceName })
-          });
-          instanceId = pairing.instanceId;
+        const pairing = mode === 'initial' || mode === 'resume'
+          ? await api('/api/setup', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: '{}'
+            })
+          : await api('/api/pairing-codes', {
+              method: 'POST',
+              headers: { authorization: 'Bearer ' + deviceToken }
+            });
+        showCode(pairing);
+        if (mode === 'initial' || mode === 'resume') {
+          mode = 'unavailable';
+          generate.style.display = 'none';
+          intro.textContent = '实例已经完成初始化。下面的首次配对码只显示这一次。';
+          notice.textContent = '完成首台设备配对后，请从已连接设备的设置中生成后续配对码。';
         }
-        document.querySelector('#code').textContent = pairing.code;
-        document.querySelector('#expiry').textContent = '有效期至：' + new Date(pairing.expiresAt).toLocaleString();
-        document.querySelector('#instance').textContent = '实例：' + (instanceId || '已初始化');
-        result.style.display = 'block';
-        document.querySelector('#secret').value = '';
       } catch (error) {
         errorBox.textContent = error instanceof Error ? error.message : '请求失败';
+        if (error && error.status === 401) {
+          mode = 'unavailable';
+          deviceToken = '';
+          generate.style.display = 'none';
+          intro.textContent = '实例已经初始化，但这个浏览器保存的设备连接已经失效。';
+          notice.textContent = '请从另一台仍然已连接的设备进入“设置 → 连接新设备”生成配对码。';
+        } else if (error && error.status === 409) {
+          await loadStatus();
+        }
       } finally {
-        submit.disabled = false;
+        generate.disabled = false;
       }
     });
+
+    document.querySelector('#copy').addEventListener('click', async () => {
+      const code = codeOutput.textContent || '';
+      try {
+        await navigator.clipboard.writeText(code);
+        document.querySelector('#copy').textContent = '已复制';
+      } catch {
+        const selection = window.getSelection();
+        if (selection) selection.selectAllChildren(codeOutput);
+      }
+    });
+
+    void loadStatus();
   </script>
 </body>
 </html>`;
@@ -124,6 +194,7 @@ export function setupPage(): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store, private",
+      "pragma": "no-cache",
       "content-security-policy":
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",

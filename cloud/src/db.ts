@@ -1,9 +1,47 @@
-import { hmacSha256Base64Url } from "./crypto";
+import { hmacSha256Base64Url, randomToken } from "./crypto";
 import type { Env, ImageAsset, ImageRow, Note, NoteRow } from "./types";
 
+let imageSigningKeyPromise: Promise<string> | null = null;
+
+export async function imageSigningKey(env: Env): Promise<string> {
+  if (imageSigningKeyPromise) return imageSigningKeyPromise;
+
+  imageSigningKeyPromise = (async () => {
+    const instanceId = await getInstanceId(env);
+    if (!instanceId) {
+      throw new Error("The NotesFlash instance must be initialized before signing images.");
+    }
+
+    const existing = await env.DB.prepare(
+      "SELECT value FROM instance_state WHERE key = 'image_signing_key'",
+    ).first<{ value: string }>();
+    if (existing?.value) return existing.value;
+
+    const candidate = randomToken(32);
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO instance_state(key, value, updated_at)
+       VALUES ('image_signing_key', ?, ?)
+       ON CONFLICT(key) DO NOTHING`,
+    )
+      .bind(candidate, now)
+      .run();
+
+    const stored = await env.DB.prepare(
+      "SELECT value FROM instance_state WHERE key = 'image_signing_key'",
+    ).first<{ value: string }>();
+    if (!stored?.value) throw new Error("Image signing key could not be initialized.");
+    return stored.value;
+  })().catch((error) => {
+    imageSigningKeyPromise = null;
+    throw error;
+  });
+
+  return imageSigningKeyPromise;
+}
+
 export async function imageAccessUrl(env: Env, imageId: string): Promise<string> {
-  const secret = env.OWNER_SETUP_SECRET;
-  if (!secret) return `/api/images/${encodeURIComponent(imageId)}`;
+  const secret = await imageSigningKey(env);
   const expires = Date.now() + 24 * 60 * 60 * 1000;
   const signature = await hmacSha256Base64Url(secret, `${imageId}:${expires}`);
   return `/api/images/${encodeURIComponent(imageId)}?expires=${expires}&signature=${encodeURIComponent(signature)}`;

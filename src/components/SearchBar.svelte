@@ -47,12 +47,12 @@
   }
 </script>
 
-<div class="surface sticky top-[calc(.75rem+var(--safe-top))] z-30 rounded-box shadow-sm">
-  <div class="flex items-center gap-2 p-2 pb-1">
-    <Search size={18} class="ml-1 shrink-0 text-base-content/45" />
+<div class="search-shell surface sticky top-[calc(.75rem+var(--safe-top))] z-30 rounded-box">
+  <div class="flex items-center gap-2 px-2.5 pb-1 pt-2">
+    <Search size={18} strokeWidth={1.8} class="ml-0.5 shrink-0 text-base-content/38" />
     <input
       bind:this={inputElement}
-      class="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-base-content/38"
+      class="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] tracking-[-0.005em] outline-none placeholder:text-base-content/34"
       type="text"
       role="searchbox"
       inputmode="search"
@@ -71,10 +71,10 @@
 
     {#if semanticSearching}
       <span class="tooltip tooltip-bottom" data-tip="正在补充语义结果">
-        <LoaderCircle size={16} class="animate-spin text-primary" />
+        <LoaderCircle size={15} class="animate-spin text-primary/70" />
       </span>
     {:else if semanticEnabled && value.trim()}
-      <span class="badge badge-ghost badge-sm hidden gap-1 border-base-300 text-[10px] text-base-content/55 sm:inline-flex">
+      <span class="badge badge-ghost badge-sm hidden gap-1 border-base-content/8 bg-base-200/55 text-[10px] font-medium text-base-content/42 sm:inline-flex">
         AI
       </span>
     {/if}
@@ -82,7 +82,7 @@
     {#if value}
       <button
         type="button"
-        class="btn btn-ghost btn-circle btn-xs text-base-content/50"
+        class="btn btn-ghost btn-circle btn-xs text-base-content/42 hover:bg-base-200/70"
         aria-label="清空搜索"
         on:click={() => dispatch('input', '')}
       >
@@ -92,7 +92,7 @@
 
     <button
       type="button"
-      class="btn btn-ghost btn-circle btn-sm"
+      class="btn btn-ghost btn-circle btn-sm text-base-content/62 hover:bg-base-200/70"
       aria-label="打开设置"
       on:click={() => dispatch('settings')}
     >
@@ -100,27 +100,47 @@
     </button>
   </div>
 
-  <div id="quick-draft-hint" class="px-3 pb-2" aria-live="polite">
-    <div class="flex h-1.5 overflow-hidden rounded-full bg-base-300/70">
+  <div id="quick-draft-hint" class="px-3 pb-2.5" aria-live="polite">
+    <div class="draft-track flex h-0.5 overflow-hidden rounded-full">
       <span
-        class="h-full bg-primary transition-[width] duration-150"
+        class="draft-title h-full transition-[width] duration-150"
         style={`width: ${value ? titleShare : 0}%`}
       ></span>
       {#if draft.hasBodySeparator}
-        <span class="h-full flex-1 bg-accent transition-[width] duration-150"></span>
+        <span class="draft-body h-full flex-1 transition-[width] duration-150"></span>
       {/if}
     </div>
-    <div class="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-base-content/45">
+    <div class="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-base-content/40">
       {#if !value}
-        <span><strong class="font-medium text-primary">标题</strong> · 按 Space 开始正文</span>
+        <span><strong class="font-medium text-base-content/58">标题</strong> · 按 Space 开始正文</span>
       {:else if !draft.hasBodySeparator}
-        <span class="truncate"><strong class="font-medium text-primary">标题</strong> {draft.title}</span>
+        <span class="truncate"><strong class="font-medium text-base-content/58">标题</strong> {draft.title}</span>
         <span class="ml-auto shrink-0">Space → 正文</span>
       {:else}
-        <span class="max-w-[45%] truncate"><strong class="font-medium text-primary">标题</strong> {draft.title || '无标题'}</span>
+        <span class="max-w-[45%] truncate"><strong class="font-medium text-base-content/58">标题</strong> {draft.title || '无标题'}</span>
         <span class="text-base-content/25">/</span>
-        <span class="min-w-0 flex-1 truncate"><strong class="font-medium text-accent">正文</strong> {draft.body || '继续输入…'}</span>
+        <span class="min-w-0 flex-1 truncate"><strong class="font-medium text-base-content/58">正文</strong> {draft.body || '继续输入…'}</span>
       {/if}
     </div>
   </div>
 </div>
+
+<style>
+  .search-shell {
+    box-shadow:
+      0 1px 2px color-mix(in oklab, var(--color-base-content) 4%, transparent),
+      0 10px 32px color-mix(in oklab, var(--color-base-content) 5%, transparent);
+  }
+
+  .draft-track {
+    background: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  }
+
+  .draft-title {
+    background: color-mix(in oklab, var(--color-primary) 68%, var(--color-base-content) 12%);
+  }
+
+  .draft-body {
+    background: color-mix(in oklab, var(--color-success) 44%, var(--color-base-content) 12%);
+  }
+</style>

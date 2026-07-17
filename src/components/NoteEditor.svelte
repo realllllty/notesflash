@@ -25,6 +25,7 @@
   let saveTimer: number | undefined;
   let editRevision = 0;
   let savePromise: Promise<boolean> | null = null;
+  let uploadPromise: Promise<boolean> | null = null;
   let editorElement: HTMLElement;
 
   $: if (note.id !== activeId) reset(note);
@@ -65,6 +66,7 @@
   }
 
   export async function flush(): Promise<boolean> {
+    if (uploadPromise && !(await uploadPromise)) return false;
     return persist();
   }
 
@@ -143,34 +145,41 @@
     uploading = true;
     errorMessage = '';
 
-    try {
-      const uploaded: ImageAsset[] = [];
-      for (const file of files) uploaded.push(await uploadImage(file));
+    const operation = (async (): Promise<boolean> => {
+      try {
+        const uploaded: ImageAsset[] = [];
+        for (const file of files) uploaded.push(await uploadImage(file));
 
-      const inserted: NoteContentBlock[] = [
-        { key: crypto.randomUUID(), type: 'text', text: before }
-      ];
-      for (const image of uploaded) {
-        inserted.push({ key: crypto.randomUUID(), type: 'image', image });
-        inserted.push({ key: crypto.randomUUID(), type: 'text', text: '' });
+        const inserted: NoteContentBlock[] = [
+          { key: crypto.randomUUID(), type: 'text', text: before }
+        ];
+        for (const image of uploaded) {
+          inserted.push({ key: crypto.randomUUID(), type: 'image', image });
+          inserted.push({ key: crypto.randomUUID(), type: 'text', text: '' });
+        }
+        const trailing = inserted[inserted.length - 1];
+        if (trailing.type === 'text') trailing.text = after;
+
+        blocks = [...blocks.slice(0, blockIndex), ...inserted, ...blocks.slice(blockIndex + 1)];
+        markDirty();
+        const trailingKey = trailing.key;
+        window.setTimeout(() => {
+          const next = editorElement?.querySelector<HTMLTextAreaElement>(`textarea[data-block-key="${trailingKey}"]`);
+          next?.focus({ preventScroll: true });
+          next?.setSelectionRange(0, 0);
+        }, 0);
+        return true;
+      } catch (error) {
+        status = 'error';
+        errorMessage = error instanceof Error ? error.message : '图片上传失败';
+        return false;
+      } finally {
+        uploading = false;
       }
-      const trailing = inserted[inserted.length - 1];
-      if (trailing.type === 'text') trailing.text = after;
-
-      blocks = [...blocks.slice(0, blockIndex), ...inserted, ...blocks.slice(blockIndex + 1)];
-      markDirty();
-      const trailingKey = trailing.key;
-      window.setTimeout(() => {
-        const next = editorElement?.querySelector<HTMLTextAreaElement>(`textarea[data-block-key="${trailingKey}"]`);
-        next?.focus({ preventScroll: true });
-        next?.setSelectionRange(0, 0);
-      }, 0);
-    } catch (error) {
-      status = 'error';
-      errorMessage = error instanceof Error ? error.message : '图片上传失败';
-    } finally {
-      uploading = false;
-    }
+    })();
+    uploadPromise = operation;
+    await operation;
+    if (uploadPromise === operation) uploadPromise = null;
   }
 
   function removeImage(blockKey: string): void {
@@ -220,7 +229,7 @@
   }
 
   async function closeEditor(): Promise<void> {
-    if (await persist()) close();
+    if (await flush()) close();
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {

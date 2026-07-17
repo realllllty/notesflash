@@ -1,7 +1,6 @@
 import {
   authenticate,
   createPairingCodeHandler,
-  createRecoveryPairingCode,
   initializeInstance,
   listDevices,
   logoutCurrentSession,
@@ -48,9 +47,6 @@ async function route(context: RequestContext): Promise<Response> {
   }
   if (path === "/api/setup/status" && method === "GET") return setupStatus(context);
   if (path === "/api/setup" && method === "POST") return initializeInstance(context);
-  if (path === "/api/setup/pairing-code" && method === "POST") {
-    return createRecoveryPairingCode(context);
-  }
   if (path === "/api/devices/pair" && method === "POST") return pairDevice(context);
 
   // Signed image URLs let the PWA render an ordinary <img src> without
