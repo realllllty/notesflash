@@ -4,6 +4,19 @@ interface ServiceWorkerEnvironment {
   serviceWorkerSupported: boolean;
 }
 
+interface LegacyServiceWorkerRegistration {
+  unregister(): Promise<boolean>;
+}
+
+export interface TauriServiceWorkerCleanupAdapters {
+  getRegistrations(): Promise<readonly LegacyServiceWorkerRegistration[]>;
+  hasController(): boolean;
+  getReloadMarker(): string | null;
+  setReloadMarker(value: string): void;
+  removeReloadMarker(): void;
+  reload(): void;
+}
+
 const TAURI_SW_CLEANUP_KEY = 'notesflash.tauri-sw-cleanup.v1';
 
 export function shouldRegisterPwaServiceWorker(environment: ServiceWorkerEnvironment): boolean {
@@ -15,7 +28,12 @@ export function shouldClearTauriServiceWorkers(environment: ServiceWorkerEnviron
   return environment.isTauri && environment.serviceWorkerSupported;
 }
 
-export function registerPwaServiceWorker(): void {
+/**
+ * Prepares the runtime before Svelte mounts. A false result means a one-time
+ * reload was started to release a legacy service-worker controller, so the
+ * current document must not begin loading cloud data.
+ */
+export async function prepareRuntimeServiceWorker(): Promise<boolean> {
   const serviceWorkerSupported = 'serviceWorker' in navigator;
   const environment = {
     isTauri: '__TAURI_INTERNALS__' in window,
@@ -24,14 +42,13 @@ export function registerPwaServiceWorker(): void {
   };
 
   if (shouldClearTauriServiceWorkers(environment)) {
-    void clearLegacyTauriServiceWorkers();
-    return;
+    return clearLegacyTauriServiceWorkers();
   }
 
   if (
     !shouldRegisterPwaServiceWorker(environment)
   ) {
-    return;
+    return true;
   }
 
   window.addEventListener(
@@ -41,24 +58,41 @@ export function registerPwaServiceWorker(): void {
     },
     { once: true }
   );
+  return true;
 }
 
-async function clearLegacyTauriServiceWorkers(): Promise<void> {
+export async function clearLegacyTauriServiceWorkers(
+  adapters: TauriServiceWorkerCleanupAdapters = defaultCleanupAdapters()
+): Promise<boolean> {
   try {
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    if (registrations.length === 0) {
-      sessionStorage.removeItem(TAURI_SW_CLEANUP_KEY);
-      return;
+    const registrations = await adapters.getRegistrations();
+    const controlled = adapters.hasController();
+    await Promise.allSettled(registrations.map((registration) => registration.unregister()));
+
+    // A controller can outlive its registration until the current document is
+    // reloaded. This also covers the observed edge case where getRegistrations
+    // is already empty but WKWebView still reports a legacy controller.
+    if (controlled && adapters.getReloadMarker() !== 'done') {
+      adapters.setReloadMarker('done');
+      adapters.reload();
+      return false;
     }
 
-    const controlled = navigator.serviceWorker.controller !== null;
-    await Promise.all(registrations.map((registration) => registration.unregister()));
-    if (controlled && sessionStorage.getItem(TAURI_SW_CLEANUP_KEY) !== 'done') {
-      sessionStorage.setItem(TAURI_SW_CLEANUP_KEY, 'done');
-      window.location.reload();
-    }
+    if (!controlled) adapters.removeReloadMarker();
   } catch {
     // Service workers are optional in the desktop WebView. Cleanup failure
-    // must never prevent the native app from starting.
+    // must never prevent the native HTTP client from starting.
   }
+  return true;
+}
+
+function defaultCleanupAdapters(): TauriServiceWorkerCleanupAdapters {
+  return {
+    getRegistrations: () => navigator.serviceWorker.getRegistrations(),
+    hasController: () => navigator.serviceWorker.controller !== null,
+    getReloadMarker: () => sessionStorage.getItem(TAURI_SW_CLEANUP_KEY),
+    setReloadMarker: (value) => sessionStorage.setItem(TAURI_SW_CLEANUP_KEY, value),
+    removeReloadMarker: () => sessionStorage.removeItem(TAURI_SW_CLEANUP_KEY),
+    reload: () => window.location.reload()
+  };
 }

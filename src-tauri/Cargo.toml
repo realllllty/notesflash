@@ -1,6 +1,6 @@
 [package]
 name = "notesflash"
-version = "0.1.1"
+version = "0.1.2"
 description = "A compact, search-first notes client"
 authors = ["NotesFlash contributors"]
 edition = "2021"
@@ -16,4 +16,5 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-http = "2.5.9"
 tauri-plugin-single-instance = "2"

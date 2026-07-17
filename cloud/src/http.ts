@@ -87,7 +87,7 @@ export function preflight(request: Request, env: Env): Response {
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
       "access-control-allow-headers":
-        "authorization,content-type,idempotency-key,x-file-name",
+        "authorization,content-type,idempotency-key,x-file-name,cache-control,pragma",
       "access-control-max-age": "86400",
       vary: "Origin",
     },

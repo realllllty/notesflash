@@ -1,4 +1,5 @@
 import { characterNgrams, cosineSimilarity, makeSnippet, normalizeText } from './text';
+import { NativeHttpError, runtimeFetch } from './runtime-fetch';
 import type {
   ConnectionProfile,
   CreateNoteInput,
@@ -169,8 +170,7 @@ export class RemoteNotesClient implements NotesClient {
     const endpoint = normalizeEndpoint(this.connection.endpoint);
     const response = await fetchWorker(endpoint, path, {
       ...init,
-      headers,
-      cache: 'no-store'
+      headers
     });
     const payload = await readWorkerPayload(response, endpoint);
     if (!response.ok) throw toApiError(response, payload);
@@ -503,7 +503,7 @@ export function normalizeEndpoint(value: string): string {
 
 async function fetchWorker(endpoint: string, path: string, init: RequestInit): Promise<Response> {
   try {
-    return await fetch(`${endpoint}${path}`, init);
+    return await runtimeFetch(`${endpoint}${path}`, init);
   } catch (error) {
     throw mapWorkerNetworkError(error, endpoint);
   }
@@ -518,6 +518,18 @@ async function readWorkerPayload(response: Response, endpoint: string): Promise<
 }
 
 function mapWorkerNetworkError(error: unknown, endpoint: string): unknown {
+  if (error instanceof NativeHttpError) {
+    const host = workerHost(endpoint);
+    const reason = error.nativeCause instanceof Error
+      ? error.nativeCause.message
+      : String(error.nativeCause);
+    return new ApiError(
+      `桌面原生网络请求失败（${host}）。请重试；如果问题持续，请把此错误截图发给开发者。`,
+      0,
+      'NATIVE_HTTP_ERROR',
+      { endpoint, reason, transport: 'tauri-native' }
+    );
+  }
   if (!isNetworkFailure(error)) return error;
 
   const host = workerHost(endpoint);

@@ -75,6 +75,27 @@ describe('API endpoint and network errors', () => {
     expect(error).toMatchObject({ status: 0, code: 'NETWORK_ERROR' });
     expect(error.message).toContain('notesflash-cloud.example.workers.dev');
   });
+
+  it('sends authenticated requests without WebKit cache-control request options', async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ notes: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    vi.stubGlobal('fetch', browserFetch);
+    const client = new RemoteNotesClient({
+      endpoint: 'https://notesflash-cloud.example.workers.dev',
+      token: 'device-token'
+    });
+
+    await client.listNotes('updated_desc');
+
+    const [, init] = browserFetch.mock.calls[0] as [string, RequestInit];
+    expect(init).not.toHaveProperty('cache');
+    const headers = new Headers(init.headers);
+    expect(headers.get('authorization')).toBe('Bearer device-token');
+  });
 });
 
 async function rejectedApiError(promise: Promise<unknown>): Promise<ApiError> {

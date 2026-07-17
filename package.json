@@ -1,6 +1,6 @@
 {
   "name": "notesflash",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,9 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.8.0",
     "@lucide/svelte": "^0.544.0",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-http": "^2.5.9",
     "svelte": "^5.16.0"
   },
   "devDependencies": {

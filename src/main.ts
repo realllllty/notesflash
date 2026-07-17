@@ -1,12 +1,15 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import './app.css';
-import { registerPwaServiceWorker } from './lib/pwa';
+import { prepareRuntimeServiceWorker } from './lib/pwa';
 
-registerPwaServiceWorker();
+async function bootstrap(): Promise<void> {
+  const shouldMount = await prepareRuntimeServiceWorker();
+  if (!shouldMount) return;
 
-const app = mount(App, {
-  target: document.getElementById('app')!
-});
+  mount(App, {
+    target: document.getElementById('app')!
+  });
+}
 
-export default app;
+void bootstrap();
