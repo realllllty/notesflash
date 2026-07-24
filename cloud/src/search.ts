@@ -92,6 +92,7 @@ interface SemanticNoteExcerpt {
   id: string;
   title: string;
   body_excerpt: string;
+  migration_target?: number;
 }
 
 interface RerankedNote {
@@ -104,7 +105,7 @@ const DEFAULT_RERANKER_BODY_EXCERPT_CHARS = 1_200;
 const MAX_RERANKER_BODY_EXCERPT_CHARS = 4_000;
 
 function rerankerMinimumScore(context: RequestContext): number {
-  const raw = context.env.RERANKER_MIN_SCORE ?? "0.5";
+  const raw = context.env.RERANKER_MIN_SCORE ?? "0.05";
   const configured = Number(raw.trim());
   if (raw.trim() === "" || !Number.isFinite(configured)) {
     throw new AppError(
@@ -392,5 +393,47 @@ export async function searchIndexStatus(context: RequestContext): Promise<Respon
     bodyExcerptCharacters: rerankerBodyExcerptChars(context),
     topK: semanticTopK(context, undefined),
     currentNoteCount: noteCount?.count ?? 0,
+  });
+}
+
+export async function migrateRerankerDiagnostic(context: RequestContext): Promise<Response> {
+  requirePrincipal(context);
+  const bodyExcerptCharacters = rerankerBodyExcerptChars(context);
+  const notes = (await context.env.DB.prepare(
+    `SELECT
+       id,
+       title,
+       substr(body, 1, ?) AS body_excerpt,
+       CASE
+         WHEN instr(title, '迁移') > 0 OR instr(body, '迁移') > 0 THEN 1
+         ELSE 0
+       END AS migration_target
+     FROM notes
+     WHERE deleted_at IS NULL
+     ORDER BY id ASC`,
+  )
+    .bind(bodyExcerptCharacters)
+    .all<SemanticNoteExcerpt>()).results;
+  const migrationTargets = notes.filter((note) => note.migration_target === 1);
+  const normalRanking = await rerankNotes(context, "migrate", notes, Math.min(notes.length, 8));
+  const targetRanking = await rerankNotes(
+    context,
+    "migrate",
+    migrationTargets,
+    Math.min(migrationTargets.length, 8),
+  );
+
+  return json({
+    query: "migrate",
+    rerankerModel: RERANKER_MODEL,
+    configuredThreshold: rerankerMinimumScore(context),
+    bodyExcerptCharacters,
+    comparedNoteCount: notes.length,
+    migrationTargetCount: migrationTargets.length,
+    normalTopScores: normalRanking.map((result) => result.score),
+    migrationTargetsInNormalTopK: normalRanking.filter(
+      (result) => result.note.migration_target === 1,
+    ).length,
+    migrationTargetScores: targetRanking.map((result) => result.score),
   });
 }

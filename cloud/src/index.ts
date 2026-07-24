@@ -20,7 +20,12 @@ import {
   updateNote,
 } from "./notes";
 import { consumeIndexQueue, retryPendingIndexes } from "./queue";
-import { lexicalSearch, searchIndexStatus, semanticSearch } from "./search";
+import {
+  lexicalSearch,
+  migrateRerankerDiagnostic,
+  searchIndexStatus,
+  semanticSearch,
+} from "./search";
 import { setupPage } from "./setup-page";
 import type { Env, IndexJob, RequestContext } from "./types";
 
@@ -85,6 +90,9 @@ async function route(context: RequestContext): Promise<Response> {
   if (path === "/api/search/lexical" && method === "GET") return lexicalSearch(context);
   if (path === "/api/search/semantic" && method === "POST") return semanticSearch(context);
   if (path === "/api/search/status" && method === "GET") return searchIndexStatus(context);
+  if (path === "/api/internal/reranker-migrate-diagnostic" && method === "POST") {
+    return migrateRerankerDiagnostic(context);
+  }
 
   if (path === "/api/images" && method === "POST") return uploadImage(context);
   const imageId = pathId(path, /^\/api\/images\/([^/]+)$/);

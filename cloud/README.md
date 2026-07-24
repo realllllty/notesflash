@@ -146,7 +146,7 @@ npm run check
 | `ALLOWED_ORIGINS` | comma-separated origins or `*` | `*` |
 | `EMBEDDING_MODEL` | background indexing model; not used by semantic queries | `@cf/baai/bge-m3` |
 | `EMBEDDING_DIMENSIONS` | background Vectorize dimension validation | `1024` |
-| `RERANKER_MIN_SCORE` | minimum `@cf/baai/bge-reranker-base` score returned | `0.5` |
+| `RERANKER_MIN_SCORE` | minimum `@cf/baai/bge-reranker-base` score returned | `0.05` |
 | `RERANKER_BODY_EXCERPT_CHARS` | maximum body characters compared per note (hard maximum 4000) | `1200` |
 | `SEMANTIC_TOP_K` | semantic result count/cost ceiling (hard maximum 8) | `8` |
 | `MAX_IMAGE_BYTES` | maximum multipart file size | `12582912` (12 MiB) |
@@ -436,7 +436,9 @@ Both endpoints return `results`. Each result includes the complete note plus:
 
 The frontend should show literal results immediately and call semantic search
 only after a successful literal search returns zero rows. Reranker results below
-`RERANKER_MIN_SCORE` are omitted. Calibrate the default `0.5` against a real
+`RERANKER_MIN_SCORE` are omitted. The default `0.05` is calibrated to retain
+short-English-query to Chinese-note matches such as `migrate` to `迁移`, while
+still dropping very low-score noise. Recalibrate it against the instance's real
 multilingual positive/negative note corpus; do not tune it using Vectorize
 cosine scores.
 
@@ -450,6 +452,20 @@ This reports the direct-reranker strategy, comparison scope, reranker model,
 threshold, body excerpt length, Top K, and the number of current non-deleted
 notes that a semantic query will compare. It does not inspect Vectorize because
 Vectorize is not part of the semantic query path.
+
+For production-safe calibration of the `migrate` to `迁移` cross-language case,
+an authenticated device may call:
+
+```http
+POST /api/internal/reranker-migrate-diagnostic
+Authorization: Bearer <device-token>
+```
+
+The response contains only anonymous reranker score arrays and aggregate note
+counts. It never returns note IDs, titles, bodies, image URLs, or image metadata.
+Use it to distinguish AI errors, Top-K exclusion, and threshold filtering without
+exposing note content; treat it as an operator diagnostic rather than a client
+search endpoint.
 
 ## Queue consistency model
 

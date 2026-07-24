@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { semanticSearch } from "../src/search";
+import { migrateRerankerDiagnostic, semanticSearch } from "../src/search";
 import type { NoteRow, RequestContext } from "../src/types";
 
 interface ContextOptions {
@@ -84,6 +84,7 @@ function context(options: ContextOptions) {
                 id: row.id,
                 title: row.title,
                 body_excerpt: [...row.body].slice(0, maximumCharacters).join(""),
+                migration_target: row.title.includes("迁移") || row.body.includes("迁移") ? 1 : 0,
               })),
             };
           }
@@ -108,7 +109,7 @@ function context(options: ContextOptions) {
       DB: db,
       AI: { run: aiRun },
       VECTOR_INDEX: { query: vectorQuery },
-      RERANKER_MIN_SCORE: options.rerankerMinimumScore ?? "0.5",
+      RERANKER_MIN_SCORE: options.rerankerMinimumScore ?? "0.05",
       RERANKER_BODY_EXCERPT_CHARS: options.bodyExcerptCharacters ?? "1200",
       SEMANTIC_TOP_K: "8",
     },
@@ -192,7 +193,7 @@ describe("semantic all-note reranker search", () => {
       rankingStrategy: "direct-bge-reranker",
       comparisonScope: "all-current-non-deleted-notes",
       rerankerModel: "@cf/baai/bge-reranker-base",
-      rerankerMinimumScore: 0.5,
+      rerankerMinimumScore: 0.05,
       bodyExcerptCharacters: 1200,
       comparedNoteCount: 3,
       scoredNoteCount: 1,
@@ -250,6 +251,83 @@ describe("semantic all-note reranker search", () => {
       expect.objectContaining({ id: "note-2", body: emojiBody }),
     ]);
     expect(vectorQuery).not.toHaveBeenCalled();
+  });
+
+  it("keeps calibrated cross-language migration matches while filtering low-score noise", async () => {
+    const { requestContext, vectorQuery } = context({
+      query: "migrate",
+      notes: [
+        note(
+          "note-1",
+          "cloud-service-center-39078 [Story] resouce-base库下线迁移",
+          "acc-resource-fe_1-0-2872_BRANCH\n\n服务端配置管理写\n\n服务端配置管理读\n\n采集规则配置写\n配置管理读写",
+        ),
+        note("note-2", "Unrelated deployment", "ordinary release checklist"),
+      ],
+      rerankerOutput: {
+        response: [
+          { id: 0, score: 0.06876970827579498 },
+          { id: 1, score: 0.004878689534962177 },
+        ],
+      },
+    });
+
+    const response = await semanticSearch(requestContext);
+    const payload = await response.json() as {
+      rerankerMinimumScore: number;
+      results: Array<{ id: string; score: number }>;
+    };
+
+    expect(payload.rerankerMinimumScore).toBe(0.05);
+    expect(payload.results).toEqual([
+      expect.objectContaining({ id: "note-1", score: 0.06876970827579498 }),
+    ]);
+    expect(vectorQuery).not.toHaveBeenCalled();
+  });
+
+  it("keeps the authenticated migration diagnostic anonymous and aggregate-only", async () => {
+    const sensitiveTitle = "cloud-service-center-39078 [Story] resouce-base库下线迁移";
+    const sensitiveBody = "服务端配置管理写\n服务端配置管理读";
+    const { requestContext, vectorQuery } = context({
+      query: "unused-diagnostic-request-body",
+      notes: [
+        note("a-private-note-id", sensitiveTitle, sensitiveBody),
+        note("z-other-private-id", "Unrelated", "ordinary release checklist"),
+      ],
+      rerankerOutput: { response: [{ id: 0, score: 0.06876970827579498 }] },
+    });
+
+    const response = await migrateRerankerDiagnostic(requestContext);
+    const payload = await response.json() as Record<string, unknown>;
+    const serialized = JSON.stringify(payload);
+
+    expect(payload).toMatchObject({
+      query: "migrate",
+      configuredThreshold: 0.05,
+      comparedNoteCount: 2,
+      migrationTargetCount: 1,
+      migrationTargetsInNormalTopK: 1,
+      migrationTargetScores: [0.06876970827579498],
+    });
+    expect(serialized).not.toContain(sensitiveTitle);
+    expect(serialized).not.toContain(sensitiveBody);
+    expect(serialized).not.toContain("a-private-note-id");
+    expect(serialized).not.toContain("z-other-private-id");
+    expect(vectorQuery).not.toHaveBeenCalled();
+  });
+
+  it("requires a device principal for the migration diagnostic", async () => {
+    const { requestContext, aiRun } = context({
+      query: "unauthenticated-diagnostic",
+      notes: [note("note-1", "数据库迁移", "正文")],
+    });
+    requestContext.principal = undefined;
+
+    await expect(migrateRerankerDiagnostic(requestContext)).rejects.toMatchObject({
+      status: 401,
+      code: "AUTH_REQUIRED",
+    });
+    expect(aiRun).not.toHaveBeenCalled();
   });
 
   it("uses only reranker scores for ordering and threshold filtering", async () => {
