@@ -845,7 +845,7 @@
         const historyExit = followingTop === undefined
           ? 0
           : clamp01((stickyTop + exitDistance - followingTop) / exitDistance);
-        const historyVisibility = editing ? 1 : Math.pow(1 - historyExit, 2);
+        const historyVisibility = Math.pow(1 - historyExit, 2);
         const opacity = baseOpacity * historyVisibility;
         const shadowStrength = Math.pow(1 - exit, 2);
 
@@ -1328,6 +1328,12 @@
 
   .note-stream-deck .note-stage.active-match-stage {
     z-index: 25;
+  }
+
+  .note-stream-deck .note-stage.editing-note-stage:focus-within {
+    z-index: 24;
+    --deck-opacity: 1 !important;
+    --deck-shadow-strength: 100% !important;
   }
 
   .note-card-motion {
