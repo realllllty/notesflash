@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, Check, LoaderCircle, Trash2, X } from '@lucide/svelte';
+  import { AlertTriangle, Check, LoaderCircle, X } from '@lucide/svelte';
   import { createEventDispatcher, onMount } from 'svelte';
   import {
     contentImages,
@@ -12,15 +12,15 @@
     type NoteContentBlock
   } from '../lib/note-content';
   import { isImeComposing } from '../lib/text';
-  import type { ImageAsset, Note, UpdateNoteInput } from '../lib/types';
+  import type { ImageAsset, Note, NoteLayoutMode, UpdateNoteInput } from '../lib/types';
 
   export let note: Note;
   export let saveNote: (id: string, input: UpdateNoteInput) => Promise<Note>;
-  export let deleteNote: (note: Note) => Promise<void>;
   export let uploadImage: (file: File) => Promise<ImageAsset>;
   export let close: () => void;
   export let activeRawLineIndex: number | null = null;
   export let activeTitle = false;
+  export let layoutMode: NoteLayoutMode = 'flat';
 
   const dispatch = createEventDispatcher<{ contentchange: void }>();
 
@@ -281,22 +281,6 @@
     markDirty();
   }
 
-  async function requestDelete(): Promise<void> {
-    if (!window.confirm(`确定删除“${title || '无标题'}”吗？`)) return;
-    try {
-      await deleteNote({
-        ...note,
-        title,
-        body: serializeNoteContent(blocks),
-        images: contentImages(blocks),
-        version: currentVersion
-      });
-    } catch (error) {
-      status = 'error';
-      errorMessage = error instanceof Error ? error.message : '删除失败';
-    }
-  }
-
   function clipboardImageFiles(data: DataTransfer | null): File[] {
     if (!data) return [];
     const fromItems = [...data.items]
@@ -327,7 +311,12 @@
   }
 </script>
 
-<section bind:this={editorElement} class="note-editor relative scroll-mt-24 px-3 py-4 sm:px-4">
+<section
+  bind:this={editorElement}
+  class:flat-card={layoutMode === 'flat'}
+  class:deck-card={layoutMode === 'deck'}
+  class="note-editor relative scroll-mt-24 px-3 py-4 sm:px-4"
+>
   <header
     id={`note-${note.id}-title`}
     class={`note-editor-header mb-2 flex items-start gap-3 ${activeTitle ? 'current-title-match' : ''}`}
@@ -348,7 +337,7 @@
           on:keydown={handleTitleKeydown}
         ></textarea>
       </div>
-      <div class="mt-1 flex items-center gap-2 pr-14 text-[11px] text-base-content/42">
+      <div class="mt-1 flex items-center gap-2 text-[11px] text-base-content/42">
         {#if status === 'saving' || uploading}
           <span class="inline-flex items-center gap-1"><LoaderCircle size={12} class="animate-spin" /> {uploading ? '正在粘贴图片' : '保存中'}</span>
         {:else if status === 'error'}
@@ -358,13 +347,6 @@
         {/if}
       </div>
     </div>
-    <button
-      type="button"
-      class="btn btn-ghost btn-xs absolute bottom-0 right-0 z-10 gap-1 text-error/75"
-      on:click={requestDelete}
-    >
-      <Trash2 size={13} /> 删除
-    </button>
   </header>
 
   <div class="note-lines text-[14px] text-base-content/78">
@@ -436,6 +418,31 @@
 </section>
 
 <style>
+  .note-editor {
+    border-radius: calc(var(--radius-box) * 0.72);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+    background: var(--color-base-100);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 54%, transparent),
+      0 2px 5px color-mix(in oklab, var(--color-base-content) 5%, transparent),
+      0 12px 30px color-mix(in oklab, var(--color-base-content) 7%, transparent);
+  }
+
+  .note-editor.deck-card {
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 58%, transparent),
+      0 3px 7px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 6%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      ),
+      0 18px 40px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 10%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      );
+  }
+
   .note-title-input,
   .note-body-input {
     font-family: inherit;

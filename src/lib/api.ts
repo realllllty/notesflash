@@ -372,6 +372,7 @@ export class DemoNotesClient implements NotesClient {
 
 function demoNotes(): Note[] {
   const now = Date.now();
+  const repeatedAnchorText = '同文定位-4729：这是一段会在多张卡片中重复出现的相同文本。';
   const sampleImage: ImageAsset = {
     id: 'demo-image-layout',
     url: '/icons/notesflash-512.png',
@@ -383,6 +384,46 @@ function demoNotes(): Note[] {
   };
 
   return [
+    {
+      id: 'demo-anchor-card-a',
+      title: '共同文本样例 A：命中在第一行',
+      body: `${repeatedAnchorText}\n这张卡片把共同文本放在正文开头。\n继续按 Enter 应该跳到下一张卡片，而不是停留在这里。`,
+      images: [],
+      version: 1,
+      createdAt: now - 86400000 * 10,
+      updatedAt: now - 1000 * 30,
+      embeddingStatus: 'ready'
+    },
+    {
+      id: 'demo-anchor-card-b',
+      title: '共同文本样例 B：命中在中间',
+      body: `第一行用于建立阅读上下文。\n第二行故意不包含测试词。\n第三行继续拉开卡片内部距离。\n${repeatedAnchorText}\n命中完成后，高光行应该停在搜索框下方的固定阅读锚点。\n这行用于观察高光下方是否保留足够正文。`,
+      images: [],
+      version: 1,
+      createdAt: now - 86400000 * 9,
+      updatedAt: now - 1000 * 60,
+      embeddingStatus: 'ready'
+    },
+    {
+      id: 'demo-anchor-card-c',
+      title: '共同文本样例 C：同卡命中两次',
+      body: `这张卡片用于测试同一篇笔记的多个逻辑行。\n${repeatedAnchorText}\n中间插入第一段普通文本。\n中间插入第二段普通文本。\n中间插入第三段普通文本。\n${repeatedAnchorText}\n连续按 Enter 时，两次高光都应该分别滚动到阅读锚点。\n之后再进入下一张卡片。`,
+      images: [],
+      version: 1,
+      createdAt: now - 86400000 * 8,
+      updatedAt: now - 1000 * 90,
+      embeddingStatus: 'ready'
+    },
+    {
+      id: 'demo-anchor-card-d',
+      title: '共同文本样例 D：命中在末尾',
+      body: `第一行是普通正文。\n第二行是普通正文。\n第三行用于观察滚动过程。\n第四行用于确认卡片没有被折叠。\n${repeatedAnchorText}`,
+      images: [],
+      version: 1,
+      createdAt: now - 86400000 * 7,
+      updatedAt: now - 1000 * 120,
+      embeddingStatus: 'ready'
+    },
     {
       id: crypto.randomUUID(),
       title: 'Cloudflare 后端部署',

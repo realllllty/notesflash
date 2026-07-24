@@ -7,6 +7,7 @@
     KeyRound,
     LoaderCircle,
     LogOut,
+    Maximize2,
     Moon,
     PencilLine,
     RefreshCw,
@@ -15,11 +16,13 @@
   } from '@lucide/svelte';
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { copyText } from '../lib/clipboard';
-  import type { PairingCode, SortMode } from '../lib/types';
+  import type { NoteLayoutMode, PairingCode, SortMode } from '../lib/types';
   import ProxySettings from './ProxySettings.svelte';
 
   export let open = false;
   export let sortMode: SortMode = 'updated_desc';
+  export let noteLayoutMode: NoteLayoutMode = 'flat';
+  export let wideCardsEnabled = false;
   export let semanticEnabled = true;
   export let demoMode = false;
   export let endpoint = '';
@@ -44,6 +47,8 @@
   const dispatch = createEventDispatcher<{
     close: void;
     sortchange: SortMode;
+    layoutchange: NoteLayoutMode;
+    widecardschange: boolean;
     semanticchange: boolean;
     disconnect: void;
     themechange: 'system' | 'notesflash' | 'notesflash-dark';
@@ -191,6 +196,50 @@
           <option value="created_desc">最近创建</option>
           <option value="title_asc">标题</option>
         </select>
+      </label>
+
+      <div class="flex items-center gap-3 rounded-box px-3 py-3 hover:bg-base-200/60">
+        <Command size={18} class="text-base-content/45" />
+        <span class="min-w-0 flex-1">
+          <span class="block text-sm font-medium">笔记布局</span>
+          <span class="block text-xs text-base-content/45">
+            {noteLayoutMode === 'flat' ? '独立卡片连续平铺' : '上下叠放，滚动时抽牌切换'}
+          </span>
+        </span>
+        <div class="join" aria-label="选择笔记布局">
+          <button
+            type="button"
+            class="btn btn-sm join-item"
+            class:btn-active={noteLayoutMode === 'flat'}
+            aria-pressed={noteLayoutMode === 'flat'}
+            on:click={() => dispatch('layoutchange', 'flat')}
+          >
+            平铺
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm join-item"
+            class:btn-active={noteLayoutMode === 'deck'}
+            aria-pressed={noteLayoutMode === 'deck'}
+            on:click={() => dispatch('layoutchange', 'deck')}
+          >
+            抽牌
+          </button>
+        </div>
+      </div>
+
+      <label class="flex cursor-pointer items-center gap-3 rounded-box px-3 py-3 hover:bg-base-200/60">
+        <Maximize2 size={18} class="text-base-content/45" />
+        <span class="min-w-0 flex-1">
+          <span class="block text-sm font-medium">宽幅布局</span>
+          <span class="block text-xs text-base-content/45">桌面端同步扩展搜索框、提示区和笔记流</span>
+        </span>
+        <input
+          type="checkbox"
+          class="toggle toggle-primary toggle-sm"
+          checked={wideCardsEnabled}
+          on:change={(event) => dispatch('widecardschange', (event.currentTarget as HTMLInputElement).checked)}
+        />
       </label>
 
       <label class="flex cursor-pointer items-center gap-3 rounded-box px-3 py-3 hover:bg-base-200/60">

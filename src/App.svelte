@@ -2,11 +2,13 @@
   import { CloudOff, Command, LoaderCircle, SearchX } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import ConnectPanel from './components/ConnectPanel.svelte';
+  import DeleteNoteDialog from './components/DeleteNoteDialog.svelte';
   import NoteCard from './components/NoteCard.svelte';
   import NoteEditor from './components/NoteEditor.svelte';
   import QuickCreateRow from './components/QuickCreateRow.svelte';
   import SearchBar from './components/SearchBar.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
+  import SwipeableNote from './components/SwipeableNote.svelte';
   import {
     ApiError,
     clearConnection,
@@ -31,6 +33,7 @@
     ConnectionProfile,
     ImageAsset,
     Note,
+    NoteLayoutMode,
     NotesClient,
     SearchHit,
     SortMode,
@@ -62,13 +65,20 @@
   let semanticSearching = false;
   let settingsOpen = false;
   let sortMode: SortMode = readPreference('sort', 'updated_desc') as SortMode;
+  let noteLayoutMode: NoteLayoutMode = readPreference('note-layout', 'flat') === 'deck' ? 'deck' : 'flat';
+  let wideCardsEnabled = readPreference('wide-cards', 'false') === 'true';
   let semanticEnabled = readPreference('semantic', 'true') === 'true';
   let themePreference = readPreference('theme', 'system') as 'system' | 'notesflash' | 'notesflash-dark';
   let errorMessage = '';
   let toastMessage = '';
+  let deleteCandidate: Note | null = null;
+  let deletingNote = false;
+  let deleteErrorMessage = '';
   let searchBar: SearchBar;
   let lexicalTimer: number | undefined;
   let semanticTimer: number | undefined;
+  let searchAnchorCorrectionTimer: number | undefined;
+  let searchDeckResetFrame: number | undefined;
   let searchGeneration = 0;
   let lexicalSettledGeneration = 0;
   let lexicalSuccessfulGeneration = 0;
@@ -160,6 +170,8 @@
       preferredDark.removeEventListener('change', handlePreferredThemeChange);
       window.clearTimeout(lexicalTimer);
       window.clearTimeout(semanticTimer);
+      window.clearTimeout(searchAnchorCorrectionTimer);
+      cancelSearchDeckReset();
       unlisteners.forEach((unlisten) => unlisten());
     };
   });
@@ -306,6 +318,7 @@
   }
 
   function applyQuery(value: string, preserveResults = false): void {
+    cancelSearchDeckReset();
     activeQuery = value;
     selectedIndex = 0;
     activeMatchKey = null;
@@ -434,6 +447,41 @@
     focusSearchSoon();
   }
 
+  async function requestNoteDelete(note: Note): Promise<void> {
+    if (deletingNote) return;
+    if (editingId === note.id && activeEditor && !(await activeEditor.flush())) {
+      showToast('当前笔记保存失败，暂时不能删除。');
+      return;
+    }
+
+    const current = notes.find((item) => item.id === note.id)
+      ?? lexicalHits.find((hit) => hit.note.id === note.id)?.note
+      ?? semanticHits.find((hit) => hit.note.id === note.id)?.note
+      ?? note;
+    deleteCandidate = current;
+    deleteErrorMessage = '';
+  }
+
+  function cancelNoteDelete(): void {
+    if (deletingNote) return;
+    deleteCandidate = null;
+    deleteErrorMessage = '';
+  }
+
+  async function confirmNoteDelete(): Promise<void> {
+    if (!deleteCandidate || deletingNote) return;
+    deletingNote = true;
+    deleteErrorMessage = '';
+    try {
+      await deleteNote(deleteCandidate);
+      deleteCandidate = null;
+    } catch (error) {
+      deleteErrorMessage = error instanceof Error ? error.message : '删除失败，请稍后重试。';
+    } finally {
+      deletingNote = false;
+    }
+  }
+
   async function uploadImage(file: File): Promise<ImageAsset> {
     if (!client) throw new Error('尚未连接后端。');
     if (file.size > 12 * 1024 * 1024) throw new Error('单张图片不能超过 12 MB。');
@@ -533,10 +581,71 @@
   }
 
   function moveSearchMatch(direction: 'next' | 'previous'): void {
+    if (searchDeckResetFrame !== undefined) return;
+
+    const currentIndex = activeMatchKey
+      ? searchTargets.findIndex((target) => target.key === activeMatchKey)
+      : -1;
     const nextKey = moveActiveMatchKey(searchTargets, activeMatchKey, direction);
-    activeMatchKey = nextKey;
     const target = activeSearchLineTarget(searchTargets, nextKey);
-    if (target) scrollToSearchTarget(target);
+    if (!nextKey || !target) return;
+
+    const currentTarget = currentIndex >= 0 ? searchTargets[currentIndex] : null;
+    const wrapsDeckToBeginning = noteLayoutMode === 'deck'
+      && direction === 'next'
+      && searchTargets.length > 1
+      && currentIndex === searchTargets.length - 1
+      && currentTarget?.noteId !== target.noteId;
+
+    if (wrapsDeckToBeginning) {
+      resetSearchDeckToBeginning(nextKey, target);
+      return;
+    }
+
+    activeMatchKey = nextKey;
+    scrollToSearchTarget(target);
+  }
+
+  function resetSearchDeckToBeginning(nextKey: string, target: SearchLineTarget): void {
+    cancelSearchDeckReset();
+    window.clearTimeout(searchAnchorCorrectionTimer);
+
+    const startScroll = window.scrollY;
+    const finish = () => {
+      searchDeckResetFrame = undefined;
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      activeMatchKey = nextKey;
+      void tick().then(() => scrollToSearchTarget(target));
+    };
+
+    if (startScroll < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finish();
+      return;
+    }
+
+    const startedAt = performance.now();
+    const duration = Math.min(460, Math.max(280, 220 + Math.sqrt(startScroll) * 4));
+    const animate = (now: number) => {
+      const progress = clamp01((now - startedAt) / duration);
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      window.scrollTo({ top: Math.round(startScroll * (1 - eased)), behavior: 'auto' });
+
+      if (progress < 1) {
+        searchDeckResetFrame = window.requestAnimationFrame(animate);
+        return;
+      }
+      finish();
+    };
+
+    searchDeckResetFrame = window.requestAnimationFrame(animate);
+  }
+
+  function cancelSearchDeckReset(): void {
+    if (searchDeckResetFrame === undefined) return;
+    window.cancelAnimationFrame(searchDeckResetFrame);
+    searchDeckResetFrame = undefined;
   }
 
   async function openActiveSearchMatch(copyMatched: boolean): Promise<void> {
@@ -664,6 +773,136 @@
     void refreshNotes();
   }
 
+  function changeNoteLayout(next: NoteLayoutMode): void {
+    if (next === noteLayoutMode) return;
+    cancelSearchDeckReset();
+    noteLayoutMode = next;
+    writePreference('note-layout', next);
+  }
+
+  function changeWideCards(next: boolean): void {
+    if (next === wideCardsEnabled) return;
+    wideCardsEnabled = next;
+    writePreference('wide-cards', String(next));
+  }
+
+  function deckMotion(node: HTMLElement, initialMode: NoteLayoutMode) {
+    let mode = initialMode;
+    let frame = 0;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    const clearMotion = (stages: HTMLElement[]) => {
+      for (const stage of stages) {
+        stage.style.removeProperty('--deck-y');
+        stage.style.removeProperty('--deck-scale');
+        stage.style.removeProperty('--deck-rotate');
+        stage.style.removeProperty('--deck-opacity');
+        stage.style.removeProperty('--deck-shadow-strength');
+        stage.style.removeProperty('pointer-events');
+        stage.removeAttribute('inert');
+      }
+    };
+
+    const render = () => {
+      frame = 0;
+      const stages = [...node.querySelectorAll<HTMLElement>('[data-note-stage]')];
+      if (mode !== 'deck' || reducedMotion.matches || stages.length === 0) {
+        clearMotion(stages);
+        return;
+      }
+
+      const rects = stages.map((stage) => stage.getBoundingClientRect());
+      const parsedTop = Number.parseFloat(getComputedStyle(stages[0]).top);
+      const stickyTop = Number.isFinite(parsedTop) ? parsedTop : 112;
+      const exitDistance = Math.max(96, Math.min(156, window.innerHeight * 0.18));
+      const enterDistance = Math.max(240, Math.min(430, window.innerHeight * 0.5));
+      const enterStart = stickyTop + enterDistance;
+
+      for (let index = 0; index < stages.length; index += 1) {
+        if (stages[index].classList.contains('active-match-stage')) {
+          stages[index].style.setProperty('--deck-y', '0px');
+          stages[index].style.setProperty('--deck-scale', '1');
+          stages[index].style.setProperty('--deck-rotate', '0deg');
+          stages[index].style.setProperty('--deck-opacity', '1');
+          stages[index].style.setProperty('--deck-shadow-strength', '100%');
+          stages[index].style.removeProperty('pointer-events');
+          stages[index].removeAttribute('inert');
+          continue;
+        }
+
+        const enter = clamp01((enterStart - rects[index].top) / enterDistance);
+        const nextTop = rects[index + 1]?.top;
+        const exit = nextTop === undefined
+          ? 0
+          : clamp01((stickyTop + exitDistance - nextTop) / exitDistance);
+        const direction = index % 2 === 0 ? -1 : 1;
+        const translateY = (1 - enter) * 10 - exit * 14;
+        const scale = 0.975 + enter * 0.025 - exit * 0.035;
+        const rotation = direction * ((1 - enter) * 0.58 - exit * 0.28);
+        const baseOpacity = 0.84 + enter * 0.16 - exit * 0.22;
+        const editing = stages[index].classList.contains('editing-note-stage');
+        const followingTop = rects[index + 2]?.top;
+        const historyExit = followingTop === undefined
+          ? 0
+          : clamp01((stickyTop + exitDistance - followingTop) / exitDistance);
+        const historyVisibility = editing ? 1 : Math.pow(1 - historyExit, 2);
+        const opacity = baseOpacity * historyVisibility;
+        const shadowStrength = Math.pow(1 - exit, 2);
+
+        stages[index].style.setProperty('--deck-y', `${translateY.toFixed(2)}px`);
+        stages[index].style.setProperty('--deck-scale', scale.toFixed(4));
+        stages[index].style.setProperty('--deck-rotate', `${rotation.toFixed(3)}deg`);
+        stages[index].style.setProperty('--deck-opacity', opacity.toFixed(3));
+        stages[index].style.setProperty('--deck-shadow-strength', `${(shadowStrength * 100).toFixed(1)}%`);
+        if (historyVisibility < 0.02 && !editing) {
+          stages[index].style.setProperty('pointer-events', 'none');
+          stages[index].setAttribute('inert', '');
+        } else {
+          stages[index].style.removeProperty('pointer-events');
+          stages[index].removeAttribute('inert');
+        }
+      }
+    };
+
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(render);
+    };
+
+    const resizeObserver = new ResizeObserver(schedule);
+    const mutationObserver = new MutationObserver(schedule);
+    resizeObserver.observe(node);
+    mutationObserver.observe(node, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class']
+    });
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule, { passive: true });
+    reducedMotion.addEventListener('change', schedule);
+    schedule();
+
+    return {
+      update(nextMode: NoteLayoutMode) {
+        mode = nextMode;
+        schedule();
+      },
+      destroy() {
+        if (frame) window.cancelAnimationFrame(frame);
+        resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        window.removeEventListener('scroll', schedule);
+        window.removeEventListener('resize', schedule);
+        reducedMotion.removeEventListener('change', schedule);
+      }
+    };
+  }
+
+  function clamp01(value: number): number {
+    return Math.min(1, Math.max(0, value));
+  }
+
   function sortLocalNotes(items: Note[]): Note[] {
     return [...items].sort((left, right) => {
       if (sortMode === 'title_asc') return left.title.localeCompare(right.title, 'zh-CN');
@@ -753,9 +992,45 @@
   function scrollToSearchTarget(target: SearchLineTarget): void {
     const elementId = searchTargetElementId(target);
     if (!elementId) return;
-    window.setTimeout(() => {
-      document.getElementById(elementId)?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-    }, 0);
+    window.requestAnimationFrame(() => {
+      const element = document.getElementById(elementId);
+      if (!element) return;
+      scrollElementToReadingAnchor(element);
+    });
+  }
+
+  function scrollElementToReadingAnchor(element: HTMLElement): void {
+    window.clearTimeout(searchAnchorCorrectionTimer);
+    const searchBottom = document
+      .querySelector<HTMLElement>('.search-shell')
+      ?.getBoundingClientRect().bottom ?? 0;
+    const availableHeight = Math.max(180, window.innerHeight - searchBottom);
+    const readingOffset = Math.max(64, Math.min(112, availableHeight * 0.22));
+    const anchorTop = Math.min(window.innerHeight - 72, searchBottom + readingOffset);
+    const elementTop = element.getBoundingClientRect().top;
+    const maximumScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const nextScrollTop = Math.max(
+      0,
+      Math.min(maximumScroll, window.scrollY + elementTop - anchorTop)
+    );
+
+    if (Math.abs(nextScrollTop - window.scrollY) < 2) return;
+    window.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+
+    // Sticky deck cards slightly change their transform while the page moves.
+    // Apply one tiny correction after the smooth scroll so the highlighted
+    // logical line finishes on the same reading anchor in both layouts.
+    searchAnchorCorrectionTimer = window.setTimeout(() => {
+      if (!element.isConnected) return;
+      const correctedTop = element.getBoundingClientRect().top;
+      const correction = correctedTop - anchorTop;
+      if (Math.abs(correction) < 4) return;
+      const correctedScrollTop = Math.max(
+        0,
+        Math.min(maximumScroll, window.scrollY + correction)
+      );
+      window.scrollTo({ top: correctedScrollTop, behavior: 'auto' });
+    }, 260);
   }
 
   function showToast(message: string): void {
@@ -806,7 +1081,7 @@
 {#if !client}
   <ConnectPanel on:connected={(event) => connect(event.detail)} on:demo={startDemo} />
 {:else}
-  <main class="app-shell">
+  <main class="app-shell" class:wide-layout={wideCardsEnabled}>
     <SearchBar
       bind:this={searchBar}
       value={query}
@@ -818,131 +1093,160 @@
       on:settings={() => (settingsOpen = true)}
     />
 
-    <div class="mb-3 mt-3 flex min-h-5 items-center justify-between px-1 text-[11px] text-base-content/42">
-      <span>
-        {#if querySaving}
-          正在保存当前笔记并切换搜索…
-        {:else if activeQuery.trim()}
-          {searchTargets.length} 处匹配 · {visibleHits.length} 条笔记
-          {#if semanticSearching} · 正在补充语义结果{/if}
-        {:else}
-          {notes.length} 条笔记 · 全文平铺
-        {/if}
-      </span>
-      <span class="hidden items-center gap-1.5 sm:flex">
-        <Command size={12} /> ⇧ Space 唤起 · Enter/↓ 下一处 · Tab 复制并编辑
-      </span>
-    </div>
-
-    {#if demoMode}
-      <div class="alert mb-3 min-h-0 rounded-box border border-warning/20 bg-warning/8 py-2 text-xs">
-        <CloudOff size={15} />
-        <span>演示模式：内容只在当前页面内存中，刷新后会消失。</span>
-      </div>
-    {/if}
-
-    {#if errorMessage}
-      <div class="alert alert-error mb-3 min-h-0 rounded-box py-2 text-sm" role="alert">
-        <span class="min-w-0 flex-1">{errorMessage}</span>
-        <div class="flex shrink-0 gap-1">
-          {#if !demoMode && connectionStatus === 'unreachable'}
-            <button class="btn btn-ghost btn-xs" on:click={() => void retryConnection().catch(() => undefined)}>重试</button>
-            <button class="btn btn-ghost btn-xs" on:click={() => (settingsOpen = true)}>修复地址</button>
-          {:else if !demoMode && connectionStatus === 'auth-invalid'}
-            <button class="btn btn-ghost btn-xs" on:click={() => void disconnect()}>重新配对</button>
-          {/if}
-          <button class="btn btn-ghost btn-xs" on:click={() => (errorMessage = '')}>关闭</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if activeQuery.trim()}
-      <div class="mb-2">
-        <QuickCreateRow
-          query={activeQuery}
-          selected={false}
-          enterCreates={canCreateFromSearch}
-          on:click={createFromQuery}
-        />
-      </div>
-    {/if}
-
-    {#if loading && visibleHits.length === 0}
-      <div class="flex items-center justify-center gap-2 py-20 text-sm text-base-content/45">
-        <LoaderCircle size={18} class="animate-spin" /> 正在读取云端笔记…
-      </div>
-    {:else if !demoMode && connectionStatus !== 'online' && visibleHits.length === 0}
-      <div class="flex flex-col items-center py-20 text-center text-base-content/42">
-        <CloudOff size={30} strokeWidth={1.5} />
-        <p class="mt-3 text-sm">
-          {connectionStatus === 'auth-invalid' ? '设备授权已失效' : '尚未读取到云端笔记'}
-        </p>
-        <div class="mt-4 flex gap-2">
-          <button class="btn btn-outline btn-sm" on:click={() => void retryConnection().catch(() => undefined)}>重试连接</button>
-          <button class="btn btn-primary btn-sm" on:click={() => (settingsOpen = true)}>修复连接</button>
-        </div>
-      </div>
-    {:else if visibleHits.length === 0 && !activeQuery.trim()}
-      <div class="flex flex-col items-center py-20 text-center text-base-content/42">
-        <SearchX size={30} strokeWidth={1.5} />
-        <p class="mt-3 text-sm">还没有笔记</p>
-        <button class="btn btn-primary btn-sm mt-4" on:click={createFromQuery}>创建第一条</button>
-      </div>
-    {:else if visibleHits.length === 0 && activeQuery.trim()}
-      <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
-        {#if searchPending}
-          <LoaderCircle size={16} class="animate-spin text-primary/70" /> 正在搜索匹配内容…
-        {:else if canCreateFromSearch}
-          没有现有匹配，可以直接创建。
-        {:else}
-          搜索暂时未能确认结果；仍可点击上方明确创建。
-        {/if}
-      </div>
-    {:else}
-      <section class="note-stream pb-16" aria-label="笔记流">
-        {#each visibleHits as hit, index (hit.note.id)}
-          <div id={`note-${hit.note.id}`}>
-            {#if editingId === hit.note.id}
-              <NoteEditor
-                bind:this={activeEditor}
-                note={hit.note}
-                {saveNote}
-                {deleteNote}
-                {uploadImage}
-                close={finishEditing}
-                activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
-                  ? activeMatchTarget.rawLineIndex
-                  : null}
-                activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
-                on:contentchange={() => (activeMatchKey = null)}
-              />
+    <div class="app-body">
+      <div class="app-body-content">
+        <div class="mb-3 mt-3 flex min-h-5 items-center justify-between px-1 text-[11px] text-base-content/42">
+          <span>
+            {#if querySaving}
+              正在保存当前笔记并切换搜索…
+            {:else if activeQuery.trim()}
+              {searchTargets.length} 处匹配 · {visibleHits.length} 条笔记
+              {#if semanticSearching} · 正在补充语义结果{/if}
             {:else}
-              <NoteCard
-                {hit}
-                query={activeQuery}
-                optionIndex={index}
-                selected={!activeQuery.trim() && isKeyboardOptionSelected(
-                  keyboardSelectionVisible,
-                  editingId,
-                  selectedIndex,
-                  index
-                )}
-                activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
-                  ? activeMatchTarget.rawLineIndex
-                  : null}
-                activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
-                on:edit={(event) => void beginEditingAt(hit.note.id, event.detail)}
-              />
+              {notes.length} 条笔记 · {noteLayoutMode === 'flat' ? '卡片平铺' : '叠卡抽牌'}
+            {/if}
+          </span>
+          <span class="hidden items-center gap-1.5 sm:flex">
+            <Command size={12} /> ⇧ Space 唤起 · Enter/↓ 下一处 · Tab 复制并编辑
+          </span>
+        </div>
+
+        {#if demoMode}
+          <div class="alert mb-3 min-h-0 rounded-box border border-warning/20 bg-warning/8 py-2 text-xs">
+            <CloudOff size={15} />
+            <span>演示模式：内容只在当前页面内存中，刷新后会消失。</span>
+          </div>
+        {/if}
+
+        {#if errorMessage}
+          <div class="alert alert-error mb-3 min-h-0 rounded-box py-2 text-sm" role="alert">
+            <span class="min-w-0 flex-1">{errorMessage}</span>
+            <div class="flex shrink-0 gap-1">
+              {#if !demoMode && connectionStatus === 'unreachable'}
+                <button class="btn btn-ghost btn-xs" on:click={() => void retryConnection().catch(() => undefined)}>重试</button>
+                <button class="btn btn-ghost btn-xs" on:click={() => (settingsOpen = true)}>修复地址</button>
+              {:else if !demoMode && connectionStatus === 'auth-invalid'}
+                <button class="btn btn-ghost btn-xs" on:click={() => void disconnect()}>重新配对</button>
+              {/if}
+              <button class="btn btn-ghost btn-xs" on:click={() => (errorMessage = '')}>关闭</button>
+            </div>
+          </div>
+        {/if}
+
+        {#if activeQuery.trim()}
+          <div class="mb-2">
+            <QuickCreateRow
+              query={activeQuery}
+              selected={false}
+              enterCreates={canCreateFromSearch}
+              on:click={createFromQuery}
+            />
+          </div>
+        {/if}
+
+        {#if loading && visibleHits.length === 0}
+          <div class="flex items-center justify-center gap-2 py-20 text-sm text-base-content/45">
+            <LoaderCircle size={18} class="animate-spin" /> 正在读取云端笔记…
+          </div>
+        {:else if !demoMode && connectionStatus !== 'online' && visibleHits.length === 0}
+          <div class="flex flex-col items-center py-20 text-center text-base-content/42">
+            <CloudOff size={30} strokeWidth={1.5} />
+            <p class="mt-3 text-sm">
+              {connectionStatus === 'auth-invalid' ? '设备授权已失效' : '尚未读取到云端笔记'}
+            </p>
+            <div class="mt-4 flex gap-2">
+              <button class="btn btn-outline btn-sm" on:click={() => void retryConnection().catch(() => undefined)}>重试连接</button>
+              <button class="btn btn-primary btn-sm" on:click={() => (settingsOpen = true)}>修复连接</button>
+            </div>
+          </div>
+        {:else if visibleHits.length === 0 && !activeQuery.trim()}
+          <div class="flex flex-col items-center py-20 text-center text-base-content/42">
+            <SearchX size={30} strokeWidth={1.5} />
+            <p class="mt-3 text-sm">还没有笔记</p>
+            <button class="btn btn-primary btn-sm mt-4" on:click={createFromQuery}>创建第一条</button>
+          </div>
+        {:else if visibleHits.length === 0 && activeQuery.trim()}
+          <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
+            {#if searchPending}
+              <LoaderCircle size={16} class="animate-spin text-primary/70" /> 正在搜索匹配内容…
+            {:else if canCreateFromSearch}
+              没有现有匹配，可以直接创建。
+            {:else}
+              搜索暂时未能确认结果；仍可点击上方明确创建。
             {/if}
           </div>
-        {/each}
-      </section>
-    {/if}
+        {:else}
+          <section
+            use:deckMotion={noteLayoutMode}
+            class="note-stream pb-16"
+            class:note-stream-flat={noteLayoutMode === 'flat'}
+            class:note-stream-deck={noteLayoutMode === 'deck'}
+            aria-label={noteLayoutMode === 'flat' ? '平铺笔记卡片' : '叠卡笔记流'}
+          >
+            {#each visibleHits as hit, index (hit.note.id)}
+              <div
+                id={`note-${hit.note.id}`}
+                class="note-stage"
+                class:active-match-stage={activeMatchTarget?.noteId === hit.note.id}
+                class:editing-note-stage={editingId === hit.note.id}
+                data-note-stage
+                aria-current={activeMatchTarget?.noteId === hit.note.id || editingId === hit.note.id ? 'true' : undefined}
+                style={`--deck-order: ${Math.min(index, 18)}`}
+              >
+                <div class="note-card-motion">
+                <SwipeableNote
+                  label={`删除“${hit.note.title || '无标题'}”`}
+                  disabled={deletingNote}
+                  on:delete={() => void requestNoteDelete(hit.note)}
+                >
+                {#if editingId === hit.note.id}
+                  <NoteEditor
+                    bind:this={activeEditor}
+                    note={hit.note}
+                    {saveNote}
+                    {uploadImage}
+                    close={finishEditing}
+                    activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
+                      ? activeMatchTarget.rawLineIndex
+                      : null}
+                    activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                    layoutMode={noteLayoutMode}
+                    on:contentchange={() => (activeMatchKey = null)}
+                  />
+                {:else}
+                  <NoteCard
+                    {hit}
+                    query={activeQuery}
+                    optionIndex={index}
+                    selected={!activeQuery.trim() && isKeyboardOptionSelected(
+                      keyboardSelectionVisible,
+                      editingId,
+                      selectedIndex,
+                      index
+                    )}
+                    activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
+                      ? activeMatchTarget.rawLineIndex
+                      : null}
+                    activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                    layoutMode={noteLayoutMode}
+                    on:edit={(event) => void beginEditingAt(hit.note.id, event.detail)}
+                  />
+                {/if}
+                </SwipeableNote>
+                </div>
+              </div>
+            {/each}
+          </section>
+        {/if}
+      </div>
+    </div>
   </main>
 
   <SettingsDialog
     open={settingsOpen}
     {sortMode}
+    {noteLayoutMode}
+    {wideCardsEnabled}
     {semanticEnabled}
     {demoMode}
     {connectionStatus}
@@ -952,10 +1256,22 @@
     createPairingCode={!demoMode && connectionStatus === 'online' && client ? () => client!.createPairingCode() : undefined}
     on:close={() => (settingsOpen = false)}
     on:sortchange={(event) => changeSort(event.detail)}
+    on:layoutchange={(event) => changeNoteLayout(event.detail)}
+    on:widecardschange={(event) => changeWideCards(event.detail)}
     on:semanticchange={(event) => void changeSemantic(event.detail)}
     on:themechange={(event) => changeTheme(event.detail)}
     on:disconnect={() => void disconnect()}
   />
+
+  {#if deleteCandidate}
+    <DeleteNoteDialog
+      title={deleteCandidate.title}
+      deleting={deletingNote}
+      errorMessage={deleteErrorMessage}
+      on:cancel={cancelNoteDelete}
+      on:confirm={() => void confirmNoteDelete()}
+    />
+  {/if}
 
   {#if toastMessage}
     <div class="toast toast-center toast-bottom z-[70] pb-[calc(1rem+var(--safe-bottom))]">
@@ -965,3 +1281,86 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  main,
+  main :global(*) {
+    cursor: text !important;
+  }
+
+  main :global(button:not(:disabled)),
+  main :global(button:not(:disabled) *),
+  main :global(a[href]),
+  main :global(a[href] *),
+  main :global(select),
+  main :global(select *),
+  main :global(summary),
+  main :global(summary *) {
+    cursor: pointer !important;
+  }
+
+  main :global(button:disabled),
+  main :global(button:disabled *) {
+    cursor: not-allowed !important;
+  }
+
+  main.wide-layout {
+    width: max(min(100%, var(--app-max-width)), 88vw);
+  }
+
+  .note-stream-flat {
+    display: grid;
+    gap: 0.8rem;
+  }
+
+  .note-stream-deck {
+    position: relative;
+    padding-bottom: min(38dvh, 20rem);
+  }
+
+  .note-stream-deck .note-stage {
+    position: sticky;
+    top: calc(var(--safe-top) + 7.25rem);
+    z-index: calc(2 + var(--deck-order));
+    padding-bottom: 0.35rem;
+    scroll-margin-top: calc(var(--safe-top) + 7.25rem);
+  }
+
+  .note-stream-deck .note-stage.active-match-stage {
+    z-index: 25;
+  }
+
+  .note-card-motion {
+    min-width: 0;
+  }
+
+  .note-stream-deck .note-card-motion {
+    transform-origin: 50% 8%;
+    transform:
+      translate3d(0, var(--deck-y, 0), 0)
+      scale(var(--deck-scale, 1))
+      rotate(var(--deck-rotate, 0deg));
+    opacity: var(--deck-opacity, 1);
+    will-change: transform, opacity;
+  }
+
+  @media (max-width: 639px) {
+    .note-stream-flat {
+      gap: 0.65rem;
+    }
+
+    .note-stream-deck .note-stage {
+      top: calc(var(--safe-top) + 7rem);
+      scroll-margin-top: calc(var(--safe-top) + 7rem);
+      padding-bottom: 0.3rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .note-stream-deck .note-card-motion {
+      transform: none;
+      opacity: 1;
+      will-change: auto;
+    }
+  }
+</style>

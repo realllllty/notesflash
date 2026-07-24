@@ -3,7 +3,7 @@
   import { createEventDispatcher } from 'svelte';
   import { logicalNoteLines, parseNoteContent } from '../lib/note-content';
   import { formatRelativeTime } from '../lib/text';
-  import type { SearchHit } from '../lib/types';
+  import type { NoteLayoutMode, SearchHit } from '../lib/types';
   import HighlightedText from './HighlightedText.svelte';
   import ImageGallery from './ImageGallery.svelte';
 
@@ -13,6 +13,7 @@
   export let optionIndex = 0;
   export let activeRawLineIndex: number | null = null;
   export let activeTitle = false;
+  export let layoutMode: NoteLayoutMode = 'flat';
 
   const dispatch = createEventDispatcher<{
     edit: { source: 'title' } | { source: 'body'; rawLineIndex: number };
@@ -25,6 +26,8 @@
 <article
   id={`search-option-${optionIndex}`}
   class:selected
+  class:flat-card={layoutMode === 'flat'}
+  class:deck-card={layoutMode === 'deck'}
   class="note-card scroll-mt-24 px-3 py-4 sm:px-4"
   aria-current={selected ? 'true' : undefined}
 >
@@ -102,20 +105,54 @@
 <style>
   .note-card {
     border-radius: calc(var(--radius-box) * 0.72);
-    background: transparent;
-    box-shadow: inset 0 -1px color-mix(in oklab, var(--color-base-content) 6%, transparent);
-    transition: box-shadow 150ms ease, background-color 150ms ease;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+    background: color-mix(in oklab, var(--color-base-100) 97%, var(--color-base-200) 3%);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 52%, transparent),
+      0 1px 2px color-mix(in oklab, var(--color-base-content) 4%, transparent),
+      0 8px 22px color-mix(in oklab, var(--color-base-content) 5%, transparent);
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .note-card.deck-card {
+    border-color: color-mix(in oklab, var(--color-base-content) 11%, transparent);
+    background: var(--color-base-100);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 58%, transparent),
+      0 2px 5px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 6%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      ),
+      0 16px 36px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 9%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      );
   }
 
   .note-card.selected {
     background: color-mix(in oklab, var(--color-primary) 4%, transparent);
     box-shadow:
       inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 26%, transparent),
-      inset 0 -1px color-mix(in oklab, var(--color-base-content) 6%, transparent);
+      0 2px 5px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 5%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      ),
+      0 12px 28px color-mix(
+        in oklab,
+        color-mix(in oklab, var(--color-base-content) 7%, transparent) var(--deck-shadow-strength, 100%),
+        transparent
+      );
   }
 
   .note-card:not(.selected):hover {
-    background: color-mix(in oklab, var(--color-base-200) 42%, transparent);
+    border-color: color-mix(in oklab, var(--color-base-content) 14%, transparent);
+    background: color-mix(in oklab, var(--color-base-100) 91%, var(--color-base-200) 9%);
   }
 
   .note-card [role='button']:focus-visible {

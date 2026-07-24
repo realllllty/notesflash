@@ -2,6 +2,8 @@ export type EmbeddingStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 
 
 export type SortMode = 'updated_desc' | 'created_desc' | 'title_asc';
 
+export type NoteLayoutMode = 'flat' | 'deck';
+
 export interface ImageAsset {
   id: string;
   url: string;

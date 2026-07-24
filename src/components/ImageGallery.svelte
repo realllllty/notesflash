@@ -4,6 +4,16 @@
 
   export let images: ImageAsset[] = [];
   let active: ImageAsset | null = null;
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
 </script>
 
 {#if images.length > 0}
@@ -28,7 +38,8 @@
 
 {#if active}
   <div
-    class="nf-overlay-in fixed inset-0 z-50 flex items-center justify-center bg-neutral/80 p-4 backdrop-blur-sm"
+    use:portal
+    class="nf-overlay-in fixed inset-0 z-[80] flex items-center justify-center bg-neutral/80 p-4 backdrop-blur-sm"
     role="presentation"
     on:click={() => (active = null)}
     on:keydown={(event) => event.key === 'Escape' && (active = null)}

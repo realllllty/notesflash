@@ -17,6 +17,7 @@
   let inputElement: HTMLInputElement;
   let composing = false;
   let ignoreEnterUntil = 0;
+  let responseSequence = 0;
 
   $: draft = parseQuickNoteInput(value);
   $: totalDraftLength = Math.max(1, draft.title.length + draft.body.length);
@@ -30,6 +31,7 @@
   }
 
   function update(event: Event): void {
+    responseSequence += 1;
     dispatch('input', (event.currentTarget as HTMLInputElement).value);
   }
 
@@ -47,12 +49,14 @@
   }
 </script>
 
-<div class="search-shell surface sticky top-[calc(.75rem+var(--safe-top))] z-30 rounded-box">
-  <div class="flex items-center gap-2 px-2.5 pb-1 pt-2">
-    <Search size={18} strokeWidth={1.8} class="ml-0.5 shrink-0 text-base-content/38" />
+<div class="search-shell surface sticky top-[calc(.75rem+var(--safe-top))] z-30 overflow-hidden rounded-box">
+  <span class="search-focus-sweep" aria-hidden="true"></span>
+
+  <div class="flex items-center gap-2.5 px-3.5 pb-1.5 pt-2.5">
+    <Search size={19} strokeWidth={1.8} class="search-leading-icon shrink-0 text-base-content/38" />
     <input
       bind:this={inputElement}
-      class="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] tracking-[-0.005em] outline-none placeholder:text-base-content/34"
+      class="min-w-0 flex-1 bg-transparent px-0.5 py-2.5 text-[15px] tracking-[-0.005em] text-base-content outline-none placeholder:text-base-content/38"
       type="text"
       role="searchbox"
       inputmode="search"
@@ -92,7 +96,7 @@
 
     <button
       type="button"
-      class="btn btn-ghost btn-circle btn-sm text-base-content/62 hover:bg-base-200/70"
+      class="search-action btn btn-ghost btn-circle btn-sm text-base-content/62 hover:bg-base-200/75"
       aria-label="打开设置"
       on:click={() => dispatch('settings')}
     >
@@ -100,8 +104,8 @@
     </button>
   </div>
 
-  <div id="quick-draft-hint" class="px-3 pb-2.5" aria-live="polite">
-    <div class="draft-track flex h-0.5 overflow-hidden rounded-full">
+  <div id="quick-draft-hint" class="px-3.5 pb-3" aria-live="polite">
+    <div class="draft-track relative flex h-0.5 overflow-hidden rounded-full">
       <span
         class="draft-title h-full transition-[width] duration-150"
         style={`width: ${value ? titleShare : 0}%`}
@@ -109,6 +113,11 @@
       {#if draft.hasBodySeparator}
         <span class="draft-body h-full flex-1 transition-[width] duration-150"></span>
       {/if}
+      {#key responseSequence}
+        {#if responseSequence > 0}
+          <span class="input-response" aria-hidden="true"></span>
+        {/if}
+      {/key}
     </div>
     <div class="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-base-content/40">
       {#if !value}
@@ -127,13 +136,98 @@
 
 <style>
   .search-shell {
+    border-color: color-mix(in oklab, var(--color-base-content) 11%, transparent);
+    background: color-mix(in oklab, var(--color-base-100) 97%, var(--color-base-200) 3%);
     box-shadow:
-      0 1px 1px color-mix(in oklab, var(--color-base-content) 3%, transparent),
-      0 6px 20px color-mix(in oklab, var(--color-base-content) 4%, transparent);
+      inset 0 1px 0 color-mix(in oklab, white 58%, transparent),
+      inset 0 -1px 0 color-mix(in oklab, var(--color-base-content) 4%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--color-base-content) 2%, transparent),
+      0 2px 5px color-mix(in oklab, var(--color-base-content) 5%, transparent),
+      0 14px 36px color-mix(in oklab, var(--color-base-content) 7%, transparent);
+    transition:
+      transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-color 140ms ease,
+      box-shadow 140ms ease,
+      background-color 140ms ease;
+    transform: translateY(0);
+    will-change: transform;
+  }
+
+  .search-shell:focus-within {
+    transform: translateY(-1px);
+    border-color: color-mix(in oklab, var(--color-base-content) 20%, transparent);
+    background: var(--color-base-100);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 64%, transparent),
+      inset 0 -1px 0 color-mix(in oklab, var(--color-base-content) 5%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--color-base-content) 3%, transparent),
+      0 3px 7px color-mix(in oklab, var(--color-base-content) 6%, transparent),
+      0 18px 44px color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  }
+
+  .search-focus-sweep {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 20;
+    width: 34%;
+    height: 1px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateX(-115%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklab, white 82%, var(--color-base-content) 18%),
+      transparent
+    );
+  }
+
+  .search-shell:focus-within .search-focus-sweep {
+    animation: focus-sweep 420ms cubic-bezier(0.22, 0.78, 0.22, 1) both;
+  }
+
+  .search-shell :global(.search-leading-icon),
+  .search-action {
+    transition:
+      color 140ms ease,
+      background-color 140ms ease,
+      border-color 140ms ease;
+  }
+
+  .search-shell:focus-within :global(.search-leading-icon) {
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+    animation: search-icon-snap 340ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  }
+
+  .search-action {
+    border: 1px solid transparent;
+  }
+
+  .search-shell:focus-within .search-action {
+    border-color: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+    background: color-mix(in oklab, var(--color-base-200) 58%, transparent);
   }
 
   .draft-track {
     background: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  }
+
+  .input-response {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    z-index: 2;
+    width: 16%;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklab, white 78%, var(--color-primary) 22%),
+      transparent
+    );
+    animation: input-response 240ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
   }
 
   .draft-title {
@@ -142,5 +236,77 @@
 
   .draft-body {
     background: color-mix(in oklab, var(--color-success) 44%, var(--color-base-content) 12%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .search-shell,
+    .search-shell :global(.search-leading-icon),
+    .search-action {
+      transition: none;
+    }
+
+    .search-shell:focus-within {
+      transform: none;
+    }
+
+    .search-focus-sweep,
+    .search-shell:focus-within .search-focus-sweep,
+    .search-shell:focus-within :global(.search-leading-icon),
+    .input-response {
+      animation: none;
+    }
+  }
+
+  @keyframes focus-sweep {
+    0% {
+      opacity: 0;
+      transform: translateX(-115%);
+    }
+    18% {
+      opacity: 0.82;
+    }
+    78% {
+      opacity: 0.7;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(295%);
+    }
+  }
+
+  @keyframes search-icon-snap {
+    0% {
+      transform: translateX(-1px) rotate(-5deg) scale(0.94);
+    }
+    52% {
+      transform: translateX(0.5px) rotate(2deg) scale(1.04);
+    }
+    100% {
+      transform: translateX(0) rotate(0) scale(1);
+    }
+  }
+
+  @keyframes input-response {
+    0% {
+      opacity: 0;
+      transform: translateX(-110%);
+    }
+    22% {
+      opacity: 0.9;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(640%);
+    }
+  }
+
+  :global([data-theme='notesflash-dark']) .search-shell,
+  :global([data-theme='notesflash-dark']) .search-shell:focus-within {
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 9%, transparent),
+      inset 0 -1px 0 color-mix(in oklab, black 24%, transparent),
+      0 0 0 1px color-mix(in oklab, white 2%, transparent),
+      0 3px 7px color-mix(in oklab, black 22%, transparent),
+      0 18px 44px color-mix(in oklab, black 28%, transparent);
   }
 </style>
