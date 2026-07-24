@@ -1,5 +1,4 @@
 import { hydrateNotes } from "./db";
-import { embedQuery } from "./embedding";
 import { AppError, json, readJson, requirePrincipal, requireString } from "./http";
 import type { NoteRow, RequestContext, SearchResult } from "./types";
 
@@ -84,16 +83,136 @@ interface SemanticBody {
   fallbackOnly?: unknown;
 }
 
-interface VectorMatchLike {
-  id: string;
-  score?: number;
-  metadata?: Record<string, unknown>;
+interface RerankerResultLike {
+  id?: unknown;
+  score?: unknown;
 }
 
-function semanticMinimumScore(context: RequestContext): number {
-  const configured = Number.parseFloat(context.env.SEMANTIC_MIN_SCORE ?? "0.45");
-  if (!Number.isFinite(configured)) return 0.45;
-  return Math.min(Math.max(configured, -1), 1);
+interface SemanticNoteExcerpt {
+  id: string;
+  title: string;
+  body_excerpt: string;
+}
+
+interface RerankedNote {
+  note: SemanticNoteExcerpt;
+  score: number;
+}
+
+const RERANKER_MODEL = "@cf/baai/bge-reranker-base";
+const DEFAULT_RERANKER_BODY_EXCERPT_CHARS = 1_200;
+const MAX_RERANKER_BODY_EXCERPT_CHARS = 4_000;
+
+function rerankerMinimumScore(context: RequestContext): number {
+  const raw = context.env.RERANKER_MIN_SCORE ?? "0.5";
+  const configured = Number(raw.trim());
+  if (raw.trim() === "" || !Number.isFinite(configured)) {
+    throw new AppError(
+      500,
+      "INVALID_RERANKER_CONFIGURATION",
+      "RERANKER_MIN_SCORE must be a finite number.",
+    );
+  }
+  return configured;
+}
+
+function rerankerBodyExcerptChars(context: RequestContext): number {
+  const raw = context.env.RERANKER_BODY_EXCERPT_CHARS ?? String(DEFAULT_RERANKER_BODY_EXCERPT_CHARS);
+  const configured = Number(raw.trim());
+  if (
+    raw.trim() === "" ||
+    !Number.isInteger(configured) ||
+    configured < 1 ||
+    configured > MAX_RERANKER_BODY_EXCERPT_CHARS
+  ) {
+    throw new AppError(
+      500,
+      "INVALID_RERANKER_CONFIGURATION",
+      `RERANKER_BODY_EXCERPT_CHARS must be an integer between 1 and ${MAX_RERANKER_BODY_EXCERPT_CHARS}.`,
+    );
+  }
+  return configured;
+}
+
+function rerankerNoteText(note: SemanticNoteExcerpt): string {
+  const title = note.title.trim() || "无标题";
+  const bodyExcerpt = note.body_excerpt.trim();
+  return bodyExcerpt ? `${title}\n\n${bodyExcerpt}` : title;
+}
+
+async function rerankNotes(
+  context: RequestContext,
+  query: string,
+  notes: SemanticNoteExcerpt[],
+  limit: number,
+): Promise<RerankedNote[]> {
+  if (notes.length === 0) return [];
+
+  let output: unknown;
+  try {
+    output = await context.env.AI.run(RERANKER_MODEL, {
+      query,
+      contexts: notes.map((note) => ({
+        text: rerankerNoteText(note),
+      })),
+      top_k: Math.min(limit, notes.length),
+    });
+  } catch (error) {
+    console.error("Workers AI reranker request failed", context.requestId, error);
+    throw new AppError(
+      503,
+      "RERANKER_UNAVAILABLE",
+      "Workers AI could not compare the current notes for semantic search.",
+    );
+  }
+
+  const response = output && typeof output === "object"
+    ? (output as { response?: unknown }).response
+    : undefined;
+  if (!Array.isArray(response)) {
+    throw new AppError(
+      502,
+      "INVALID_RERANKER_RESPONSE",
+      "Workers AI returned an invalid reranker response.",
+    );
+  }
+
+  const seenContextIds = new Set<number>();
+  const ranked: RerankedNote[] = [];
+  for (const value of response) {
+    if (!value || typeof value !== "object") {
+      throw new AppError(
+        502,
+        "INVALID_RERANKER_RESPONSE",
+        "Workers AI returned an invalid reranker result.",
+      );
+    }
+    const result = value as RerankerResultLike;
+    const id = result.id;
+    const score = result.score;
+    if (
+      typeof id !== "number" ||
+      !Number.isInteger(id) ||
+      id < 0 ||
+      id >= notes.length ||
+      seenContextIds.has(id) ||
+      typeof score !== "number" ||
+      !Number.isFinite(score)
+    ) {
+      throw new AppError(
+        502,
+        "INVALID_RERANKER_RESPONSE",
+        "Workers AI returned an invalid reranker result.",
+      );
+    }
+    seenContextIds.add(id);
+    ranked.push({ note: notes[id], score });
+  }
+
+  // Never depend on the model response order or the D1 input order for ties.
+  return ranked.sort(
+    (left, right) => right.score - left.score || left.note.id.localeCompare(right.note.id),
+  );
 }
 
 function semanticTopK(context: RequestContext, requested: unknown): number {
@@ -105,9 +224,8 @@ function semanticTopK(context: RequestContext, requested: unknown): number {
   if (typeof requested !== "number" || !Number.isInteger(requested) || requested < 1) {
     throw new AppError(400, "INVALID_INPUT", "limit must be a positive integer.");
   }
-  // SEMANTIC_TOP_K is the instance owner's recall/cost ceiling. Older clients
-  // used to request 30 results unconditionally, so clamp rather than allowing
-  // them to turn every keystroke into a 100-candidate Vectorize query.
+  // SEMANTIC_TOP_K is the instance owner's response-size ceiling. Older
+  // clients request 30 results unconditionally, so keep the hard maximum.
   return Math.min(requested, configured);
 }
 
@@ -170,106 +288,53 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
     );
   }
 
-  const embeddingStartedAt = performance.now();
-  const vector = await embedQuery(context.env, query);
-  const embeddingDuration = performance.now() - embeddingStartedAt;
-  const vectorStartedAt = performance.now();
-  const candidateTopK = Math.min(Math.max(limit * 2, 12), 50);
-  let queryResult: VectorizeMatches;
-  try {
-    queryResult = await context.env.VECTOR_INDEX.query(vector, {
-      topK: candidateTopK,
-      // IDs and scores are sufficient because D1 is the source of truth. "all"
-      // metadata forces an additional Vectorize fetch and materially slows the
-      // hot search path.
-      returnMetadata: "none",
-    });
-  } catch (error) {
-    console.error("Vectorize semantic query failed", context.requestId, error);
-    throw new AppError(
-      503,
-      "VECTOR_SEARCH_UNAVAILABLE",
-      "Vectorize could not complete the semantic search.",
-    );
-  }
-  const vectorDuration = performance.now() - vectorStartedAt;
-  const matches = (queryResult.matches ?? []) as VectorMatchLike[];
-  const topCandidateScore = matches.find((match) => typeof match.score === "number")?.score ?? null;
-  if (matches.length === 0) {
-    return json(
-      {
-        query,
-        strategy: "semantic-fallback",
-        topK: limit,
-        candidateCount: 0,
-        topCandidateScore,
-        results: [],
-      },
-      200,
-      {
-        "server-timing": semanticServerTiming(
-          embeddingDuration,
-          vectorDuration,
-          performance.now() - startedAt,
-        ),
-      },
-    );
-  }
-
-  const minimumScore = semanticMinimumScore(context);
-  const relevantMatches = matches.filter(
-    (match) => typeof match.score === "number" && match.score >= minimumScore,
-  );
-  if (relevantMatches.length === 0) {
-    return json(
-      {
-        query,
-        strategy: "semantic-fallback",
-        topK: limit,
-        candidateCount: matches.length,
-        topCandidateScore,
-        minimumScore,
-        results: [],
-      },
-      200,
-      {
-        "server-timing": semanticServerTiming(
-          embeddingDuration,
-          vectorDuration,
-          performance.now() - startedAt,
-        ),
-      },
-    );
-  }
-
-  const orderedVectorIds = relevantMatches.map((match) => match.id);
-  const placeholders = orderedVectorIds.map(() => "?").join(",");
-  const rows = await context.env.DB.prepare(
-    `SELECT * FROM notes
+  const minimumScore = rerankerMinimumScore(context);
+  const bodyExcerptCharacters = rerankerBodyExcerptChars(context);
+  const noteScanStartedAt = performance.now();
+  const noteResult = await context.env.DB.prepare(
+    `SELECT id, title, substr(body, 1, ?) AS body_excerpt
+     FROM notes
      WHERE deleted_at IS NULL
-       AND embedding_model = ?
-       AND embedded_content_hash = content_hash
-       AND embedding_vector_id IN (${placeholders})`,
+     ORDER BY id ASC`,
   )
-    .bind(context.env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3", ...orderedVectorIds)
-    .all<NoteRow>();
+    .bind(bodyExcerptCharacters)
+    .all<SemanticNoteExcerpt>();
+  const noteScanDuration = performance.now() - noteScanStartedAt;
 
-  const rowByVectorId = new Map(
-    rows.results
-      .filter((row) => row.embedding_vector_id)
-      .map((row) => [row.embedding_vector_id as string, row]),
+  const rerankerStartedAt = performance.now();
+  const rankedNotes = await rerankNotes(
+    context,
+    query,
+    noteResult.results,
+    limit,
   );
-  const validRows: NoteRow[] = [];
-  const scores = new Map<string, number>();
-  for (const match of relevantMatches) {
-    const row = rowByVectorId.get(match.id);
-    if (!row || scores.has(row.id)) continue;
-    validRows.push(row);
-    scores.set(row.id, typeof match.score === "number" ? match.score : 0);
-    if (validRows.length >= limit) break;
-  }
+  const rerankerDuration = performance.now() - rerankerStartedAt;
+  const selectedNotes = rankedNotes
+    .filter((note) => note.score >= minimumScore)
+    .slice(0, limit);
+  const scores = new Map(selectedNotes.map((note) => [note.note.id, note.score]));
 
-  const notes = await hydrateNotes(context.env, validRows);
+  // Re-read and hydrate only notes that survived reranking. A concurrent
+  // deletion naturally removes the note from the response.
+  const hydrationStartedAt = performance.now();
+  const selectedIds = selectedNotes.map((note) => note.note.id);
+  const selectedRows = selectedIds.length === 0
+    ? []
+    : (await context.env.DB.prepare(
+      `SELECT * FROM notes
+       WHERE deleted_at IS NULL
+         AND id IN (${selectedIds.map(() => "?").join(",")})`,
+    )
+      .bind(...selectedIds)
+      .all<NoteRow>()).results;
+  const selectedRowsById = new Map(selectedRows.map((row) => [row.id, row]));
+  const notes = await hydrateNotes(
+    context.env,
+    selectedIds
+      .map((id) => selectedRowsById.get(id))
+      .filter((row): row is NoteRow => row !== undefined),
+  );
+  const hydrationDuration = performance.now() - hydrationStartedAt;
   const results: SearchResult[] = notes.map((note) => ({
     ...note,
     matchType: "semantic",
@@ -278,117 +343,54 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
   return json({
     query,
     strategy: "semantic-fallback",
-    model: context.env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3",
+    rankingStrategy: "direct-bge-reranker",
+    comparisonScope: "all-current-non-deleted-notes",
+    rerankerModel: RERANKER_MODEL,
+    rerankerMinimumScore: minimumScore,
+    bodyExcerptCharacters,
     topK: limit,
-    candidateCount: matches.length,
-    topCandidateScore,
-    minimumScore,
+    comparedNoteCount: noteResult.results.length,
+    scoredNoteCount: rankedNotes.length,
+    matchedNoteCount: selectedNotes.length,
+    topRerankerScore: rankedNotes[0]?.score ?? null,
     results,
   }, 200, {
     "server-timing": semanticServerTiming(
-      embeddingDuration,
-      vectorDuration,
+      noteScanDuration,
+      rerankerDuration,
+      hydrationDuration,
       performance.now() - startedAt,
     ),
   });
 }
 
-function semanticServerTiming(embedding: number, vector: number, total: number): string {
+function semanticServerTiming(
+  notes: number,
+  reranker: number,
+  hydrate: number,
+  total: number,
+): string {
   return [
-    `embedding;dur=${embedding.toFixed(1)}`,
-    `vector;dur=${vector.toFixed(1)}`,
+    `notes;dur=${notes.toFixed(1)}`,
+    `reranker;dur=${reranker.toFixed(1)}`,
+    `hydrate;dur=${hydrate.toFixed(1)}`,
     `total;dur=${total.toFixed(1)}`,
   ].join(", ");
 }
 
 export async function searchIndexStatus(context: RequestContext): Promise<Response> {
   requirePrincipal(context);
-  const model = context.env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3";
-  const configuredDimensions = Number.parseInt(context.env.EMBEDDING_DIMENSIONS ?? "1024", 10);
-  const [result, coverage, failures, vectorize] = await Promise.all([
-    context.env.DB.prepare(
-      `SELECT embedding_status AS status, COUNT(*) AS count
-       FROM notes WHERE deleted_at IS NULL GROUP BY embedding_status`,
-    ).all<{ status: string; count: number }>(),
-    context.env.DB.prepare(
-      `SELECT
-         COUNT(*) AS total,
-         SUM(CASE WHEN
-           embedding_status = 'ready'
-           AND embedding_model = ?
-           AND embedded_content_hash = content_hash
-           AND embedding_vector_id IS NOT NULL
-         THEN 1 ELSE 0 END) AS current_ready,
-         SUM(CASE WHEN
-           embedding_status = 'ready'
-           AND (
-             embedding_model IS NULL OR embedding_model != ?
-             OR embedded_content_hash IS NULL OR embedded_content_hash != content_hash
-             OR embedding_vector_id IS NULL
-           )
-         THEN 1 ELSE 0 END) AS stale_ready
-       FROM notes WHERE deleted_at IS NULL`,
-    )
-      .bind(model, model)
-      .first<{ total: number; current_ready: number; stale_ready: number }>(),
-    context.env.DB.prepare(
-      `SELECT COALESCE(embedding_error_code, 'UNKNOWN') AS code, COUNT(*) AS count
-       FROM notes
-       WHERE deleted_at IS NULL AND embedding_status = 'failed'
-       GROUP BY COALESCE(embedding_error_code, 'UNKNOWN')
-       ORDER BY count DESC
-       LIMIT 10`,
-    ).all<{ code: string; count: number }>(),
-    context.env.VECTOR_INDEX.describe().catch((error: unknown) => {
-      console.error("Could not describe Vectorize index", context.requestId, error);
-      return null;
-    }),
-  ]);
-
-  const total = coverage?.total ?? 0;
-  const currentReady = coverage?.current_ready ?? 0;
-  const staleReady = coverage?.stale_ready ?? 0;
-  const vectorizeRecord = vectorize as unknown as Record<string, unknown> | null;
-  const actualDimensions = vectorize && "dimensions" in vectorize.config
-    ? vectorize.config.dimensions
-    : typeof vectorizeRecord?.dimensions === "number"
-      ? vectorizeRecord.dimensions
-    : null;
-  const vectorCount = vectorize
-    ? typeof vectorizeRecord?.vectorCount === "number"
-      ? vectorizeRecord.vectorCount
-      : vectorize.vectorsCount
-    : null;
-  const metric = vectorize && "metric" in vectorize.config ? vectorize.config.metric : null;
-  const suspectedMissingVectors = vectorCount === null
-    ? null
-    : Math.max(currentReady - vectorCount, 0);
+  const noteCount = await context.env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM notes WHERE deleted_at IS NULL",
+  ).first<{ count: number }>();
 
   return json({
-    model,
-    dimensions: configuredDimensions,
-    minimumScore: semanticMinimumScore(context),
+    strategy: "direct-bge-reranker",
+    comparisonScope: "all-current-non-deleted-notes",
+    rerankerModel: RERANKER_MODEL,
+    rerankerMinimumScore: rerankerMinimumScore(context),
+    bodyExcerptCharacters: rerankerBodyExcerptChars(context),
     topK: semanticTopK(context, undefined),
-    counts: Object.fromEntries(result.results.map((row) => [row.status, row.count])),
-    coverage: {
-      total,
-      currentReady,
-      staleReady,
-      ratio: total === 0 ? 1 : currentReady / total,
-    },
-    failures: Object.fromEntries(failures.results.map((row) => [row.code, row.count])),
-    vectorize: vectorize
-      ? {
-          vectorCount,
-          dimensions: actualDimensions,
-          metric,
-          suspectedMissingVectors,
-          dimensionMatches: actualDimensions === null || actualDimensions === configuredDimensions,
-          metricMatches: metric === null || metric === "cosine",
-        }
-      : {
-          available: false,
-          suspectedMissingVectors: null,
-        },
+    currentNoteCount: noteCount?.count ?? 0,
   });
 }

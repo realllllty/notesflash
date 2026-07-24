@@ -15,8 +15,8 @@ not receive note text, images, device tokens, embeddings, or search queries.
 - A flat note collection: no folder, notebook, or hierarchy tables.
 - Literal character search using D1 FTS5 `trigram`, with a safe `instr()`
   fallback for short queries and for environments where trigram is unavailable.
-- Workers AI (`@cf/baai/bge-m3`) for document and query embeddings.
-- Vectorize cosine search for semantic recall.
+- Workers AI (`@cf/baai/bge-reranker-base`) for direct all-note semantic ranking.
+- Existing BGE-M3/Vectorize background indexing, which is not read by semantic queries.
 - Cloudflare Queue consumer for asynchronous document indexing. Saving a note
   never waits for embedding generation.
 - R2 for private image objects. Images are served through the Worker using either
@@ -34,8 +34,8 @@ macOS client ── HTTPS + device token ──► NotesFlash Worker ◄── s
     |-- Static Assets: PWA shell, manifest, service worker, icons
     |-- D1: notes, trigram FTS, devices, sessions, image metadata
     |-- R2: private image bytes
-    |-- Workers AI: text -> 1024-dimensional BGE-M3 vector
-    |-- Vectorize: cosine Top-K search
+    |-- Workers AI: every current note excerpt -> BGE reranker score
+    |-- Vectorize: background per-note index (not queried by semantic search)
     `-- Queue: asynchronous note indexing and vector deletion
 ```
 
@@ -47,8 +47,8 @@ POST/PATCH note -> D1 commit + FTS trigger -> return note immediately
 ```
 
 The client should call lexical search as the user types, then call semantic
-search only when the completed lexical request returns zero rows. If AI, Queue,
-or Vectorize is unavailable, literal search and note CRUD continue to work.
+search only when the completed lexical request returns zero rows. If Workers AI
+reranking is unavailable, literal search and note CRUD continue to work.
 
 ## Deploy to Cloudflare
 
@@ -138,15 +138,16 @@ npm run check
 |---|---|---|
 | `DB` | D1 database | required |
 | `IMAGES` | private R2 bucket | required |
-| `VECTOR_INDEX` | Vectorize cosine index | required for semantic search |
-| `AI` | Workers AI binding | required for semantic search |
+| `VECTOR_INDEX` | background per-note vector index; not read by `/api/search/semantic` | required by the existing async index worker |
+| `AI` | Workers AI binding for direct BGE reranking and background embeddings | required |
 | `INDEX_QUEUE` | Queue producer/consumer | required for async indexing |
 | `ASSETS` | same-origin PWA static assets | `./public` |
 | `INSTANCE_NAME` | display name | `NotesFlash Cloud` |
 | `ALLOWED_ORIGINS` | comma-separated origins or `*` | `*` |
-| `EMBEDDING_MODEL` | Workers AI model | `@cf/baai/bge-m3` |
-| `EMBEDDING_DIMENSIONS` | validation and Vectorize dimension | `1024` |
-| `SEMANTIC_MIN_SCORE` | minimum cosine score returned as semantic recall | `0.45` |
+| `EMBEDDING_MODEL` | background indexing model; not used by semantic queries | `@cf/baai/bge-m3` |
+| `EMBEDDING_DIMENSIONS` | background Vectorize dimension validation | `1024` |
+| `RERANKER_MIN_SCORE` | minimum `@cf/baai/bge-reranker-base` score returned | `0.5` |
+| `RERANKER_BODY_EXCERPT_CHARS` | maximum body characters compared per note (hard maximum 4000) | `1200` |
 | `SEMANTIC_TOP_K` | semantic result count/cost ceiling (hard maximum 8) | `8` |
 | `MAX_IMAGE_BYTES` | maximum multipart file size | `12582912` (12 MiB) |
 | `SESSION_TTL_DAYS` | device token lifetime | `180` |
@@ -411,11 +412,18 @@ Content-Type: application/json
 Semantic search is a fallback by default: if a literal title/body match exists,
 the endpoint returns no semantic results and does not invoke Workers AI. Send
 `fallbackOnly: false` only for diagnostics or a client that explicitly wants a
-hybrid result set. The response includes `topK`, `candidateCount`, and
-`topCandidateScore` for calibration; cosine scores are ranking signals, not
-probabilities. `Server-Timing` separates embedding, Vectorize, and total
-latency. The configured `SEMANTIC_TOP_K` and the server hard limit both prevent
-legacy clients from requesting more than eight displayed results.
+hybrid result set. When literal search is empty, the Worker reads every current
+non-deleted note from D1 and sends its complete title plus a bounded body prefix
+directly to `@cf/baai/bge-reranker-base`. The semantic endpoint does not call
+BGE-M3, Vectorize, or any vector candidate API. Only the reranker score controls
+filtering, final ordering, and the returned `results[].score`.
+
+The response reports `rankingStrategy`, `comparisonScope`, `rerankerModel`,
+`rerankerMinimumScore`, `bodyExcerptCharacters`, `comparedNoteCount`,
+`scoredNoteCount`, `matchedNoteCount`, and `topRerankerScore`. `Server-Timing`
+separates the D1 note scan, reranker, final hydration, and total latency. The
+configured `SEMANTIC_TOP_K` and the server hard limit both prevent legacy
+clients from requesting more than eight displayed results.
 
 Both endpoints return `results`. Each result includes the complete note plus:
 
@@ -427,9 +435,10 @@ Both endpoints return `results`. Each result includes the complete note plus:
 ```
 
 The frontend should show literal results immediately and call semantic search
-only after a successful literal search returns zero rows. Vector matches below
-`SEMANTIC_MIN_SCORE` are omitted; calibrate the conservative default `0.45` against a real
-multilingual note corpus after deployment.
+only after a successful literal search returns zero rows. Reranker results below
+`RERANKER_MIN_SCORE` are omitted. Calibrate the default `0.5` against a real
+multilingual positive/negative note corpus; do not tune it using Vectorize
+cosine scores.
 
 Index health is available at:
 
@@ -437,12 +446,10 @@ Index health is available at:
 GET /api/search/status
 ```
 
-Besides status counts, this reports current-model D1 coverage, failure codes,
-the bound Vectorize dimensions/metric/count, and any definite D1-to-Vectorize
-count deficit. Migration `0004_rebuild_semantic_index.sql` schedules one safe,
-idempotent rebuild for existing notes. Cron checks every five minutes and also
-requeues current D1 rows automatically if the bound Vectorize index contains
-fewer vectors than D1 references.
+This reports the direct-reranker strategy, comparison scope, reranker model,
+threshold, body excerpt length, Top K, and the number of current non-deleted
+notes that a semantic query will compare. It does not inspect Vectorize because
+Vectorize is not part of the semantic query path.
 
 ## Queue consistency model
 
@@ -457,7 +464,8 @@ Queue delivery is at least once, so every vector job is idempotent:
 - Before D1 stops referencing an older vector, the consumer emits a separate
   idempotent delete job; deletion refuses to remove any vector still referenced
   by a live note.
-- Semantic search only accepts vectors referenced by the current D1 row.
+- These invariants maintain the existing background vector index; the direct
+  semantic endpoint does not read that index.
 
 A cron trigger runs every 15 minutes to retry pending/failed indexing, reindex
 notes whose model/content hash drifted, retry deleted-vector cleanup, and remove
@@ -470,8 +478,8 @@ never rolls back or misreports a committed D1 note mutation.
 
 - Notes and image metadata are stored in the user's D1; image bytes are stored
   in the user's private R2 bucket.
-- Workers AI sees plaintext during embedding. This is self-hosted cloud storage,
-  not zero-knowledge end-to-end encryption.
+- Workers AI sees plaintext during background embedding and direct reranking.
+  This is self-hosted cloud storage, not zero-knowledge end-to-end encryption.
 - The API sets `Cache-Control: no-store, private` for notes, search, and images.
 - The app may avoid persistent local note storage, but currently edited text
   necessarily exists in process memory.
@@ -496,7 +504,11 @@ never rolls back or misreports a committed D1 note mutation.
   multi-tenant sharing service.
 - One embedding vector is generated per note. Very long documents are truncated
   to at most 60,000 characters with model-side truncation enabled; complete
-  bodies remain available to literal search.
+  bodies remain available to literal search. This background vector is not used
+  by the direct semantic endpoint.
+- Direct semantic search compares every current non-deleted note, so its cost
+  grows linearly with note count. Each comparison uses the full title and at
+  most `RERANKER_BODY_EXCERPT_CHARS` body characters.
 - Image dimensions are not decoded server-side in the MVP; width/height are null.
 - There is no local offline draft guarantee. The client must visibly distinguish
   `saving`, `saved`, and save-error states; it flushes before normal navigation,

@@ -7,8 +7,8 @@ This document describes the MVP deployment model for NotesFlash:
 - every user deploys the NotesFlash Cloud worker into their own Cloudflare account;
 - the desktop and PWA pair with that worker using a short-lived one-time code;
 - note text is not persisted in a client-side note database;
-- note text and metadata live in D1, images live in R2, and semantic vectors live in Vectorize;
-- character matching is performed against D1/FTS, while semantic matching uses Workers AI and cosine similarity in Vectorize.
+- note text and metadata live in D1, images live in R2, and the existing background vectors live in Vectorize;
+- character matching is performed against D1/FTS, while semantic matching sends every current non-deleted note excerpt directly to a Workers AI BGE reranker.
 
 The publisher of NotesFlash does **not** need to run an OAuth callback or a data backend. Cloudflare handles the authorization needed to deploy the template. Runtime authentication is handled by the worker that belongs to the user.
 
@@ -23,8 +23,8 @@ macOS Tauri app ───────────────┐      PWA runnin
 PWA ──────────────────────────┼────────► Worker API and /setup
                               │                 ├── D1: notes, devices, sessions, FTS
 first-claim browser page ─────┘                 ├── R2: note images
-                                                ├── Workers AI: document/query embeddings
-                                                ├── Vectorize: cosine-similarity index
+                                                ├── Workers AI: direct BGE reranker + background embeddings
+                                                ├── Vectorize: background index (not queried by semantic search)
                                                 └── Queue: asynchronous indexing
 ```
 
@@ -329,12 +329,12 @@ The deployment template declares the following bindings:
 | --- | --- | --- |
 | `DB` | D1 | note text, metadata, devices, sessions, pairing codes, character/FTS search state |
 | `IMAGES` | R2 | original note images and authorized image delivery |
-| `AI` | Workers AI | document and query embeddings |
-| `VECTOR_INDEX` | Vectorize | cosine-similarity search |
+| `AI` | Workers AI | direct all-note reranking and background document embeddings |
+| `VECTOR_INDEX` | Vectorize | existing background index; not queried by semantic search |
 | `INDEX_QUEUE` | Queue | asynchronous embedding/index updates |
 | `ASSETS` | Worker Static Assets | same-origin PWA shell, manifest, service worker, and icons |
 
-The default semantic model is `@cf/baai/bge-m3`, and the configured Vectorize dimensionality must match the model output used by the worker. The current MVP contract uses 1024 dimensions and cosine distance. Cloudflare currently documents a 60,000-token context; the Worker caps input at 60,000 characters and also enables model-side truncation. `SEMANTIC_MIN_SCORE` defaults to `0.45`; verify and tune it against a representative Chinese note corpus after the first real deployment.
+When literal search is empty, semantic search reads every current non-deleted note from D1 and sends its title plus a bounded body prefix directly to `@cf/baai/bge-reranker-base`. `RERANKER_BODY_EXCERPT_CHARS` defaults to `1200` with a hard maximum of `4000`; `RERANKER_MIN_SCORE` defaults to `0.5` and must be calibrated against representative multilingual positive and negative note pairs. The query path does not call BGE-M3, Vectorize, or a vector candidate list. The existing BGE-M3/Vectorize background index remains bound for the current asynchronous indexing worker but is not read by `/api/search/semantic`.
 
 The Queue consumer must be idempotent because queue delivery is at least once. A stale embedding job verifies the note version/content hash before it writes a vector. Before D1 switches away from an old vector, the consumer emits a separate delete job; that job refuses to remove a vector still referenced by a live note. Queue enqueue failure is caught after the D1 transaction, leaves the note in a retryable state, and never turns a committed note mutation into a misleading HTTP 500. Cron retries pending, failed, stale-processing, model-drifted, and content-hash-drifted notes. Deleted notes are restorable for `TRASH_RETENTION_DAYS` (30 by default); after vector cleanup and expiry, Cron permanently deletes their D1 rows and attached R2 objects.
 
@@ -605,7 +605,7 @@ Run this checklist against a brand-new Cloudflare account or an isolated test ac
 10. Close the window, press the shortcut, and confirm the process was hidden rather than destroyed.
 11. Create a plain-text note; confirm the save response does not wait for embedding and still succeeds if Queue is temporarily unavailable.
 12. Search by an exact character substring and confirm the lexical result appears.
-13. Wait for indexing and search with a semantically similar phrase; confirm Vectorize augments the result and tune `SEMANTIC_MIN_SCORE` if `0.45` is too broad or too strict.
+13. Search with a semantically similar phrase; confirm every current non-deleted note excerpt is compared directly by the BGE reranker, then tune `RERANKER_MIN_SCORE` if `0.5` is too broad or too strict.
 14. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
 15. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
 16. Install the PWA from Safari and repeat read/search/image tests in standalone mode.

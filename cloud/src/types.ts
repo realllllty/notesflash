@@ -1,4 +1,18 @@
+export interface RerankerInput {
+  query: string;
+  contexts: Array<{ text: string }>;
+  top_k?: number;
+}
+
+export interface RerankerOutput {
+  response?: Array<{
+    id?: number;
+    score?: number;
+  }>;
+}
+
 export interface AiBinding {
+  run(model: "@cf/baai/bge-reranker-base", input: RerankerInput): Promise<RerankerOutput>;
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -13,7 +27,8 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   EMBEDDING_MODEL?: string;
   EMBEDDING_DIMENSIONS?: string;
-  SEMANTIC_MIN_SCORE?: string;
+  RERANKER_MIN_SCORE?: string;
+  RERANKER_BODY_EXCERPT_CHARS?: string;
   SEMANTIC_TOP_K?: string;
   MAX_IMAGE_BYTES?: string;
   SESSION_TTL_DAYS?: string;
@@ -62,6 +77,7 @@ export interface Note {
 
 export interface SearchResult extends Note {
   matchType: "lexical" | "semantic";
+  /** Lexical rank score or final BGE reranker score; never a Vectorize cosine score. */
   score: number | null;
 }
 
