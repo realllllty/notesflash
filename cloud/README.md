@@ -47,8 +47,8 @@ POST/PATCH note -> D1 commit + FTS trigger -> return note immediately
 ```
 
 The client should call lexical search as the user types, then call semantic
-search after its own debounce/trigger policy. If AI, Queue, or Vectorize is
-unavailable, literal search and note CRUD continue to work.
+search only when the completed lexical request returns zero rows. If AI, Queue,
+or Vectorize is unavailable, literal search and note CRUD continue to work.
 
 ## Deploy to Cloudflare
 
@@ -147,6 +147,7 @@ npm run check
 | `EMBEDDING_MODEL` | Workers AI model | `@cf/baai/bge-m3` |
 | `EMBEDDING_DIMENSIONS` | validation and Vectorize dimension | `1024` |
 | `SEMANTIC_MIN_SCORE` | minimum cosine score returned as semantic recall | `0.45` |
+| `SEMANTIC_TOP_K` | semantic result count/cost ceiling (hard maximum 8) | `8` |
 | `MAX_IMAGE_BYTES` | maximum multipart file size | `12582912` (12 MiB) |
 | `SESSION_TTL_DAYS` | device token lifetime | `180` |
 | `TRASH_RETENTION_DAYS` | soft-deleted note/image retention before purge | `30` |
@@ -402,9 +403,19 @@ Content-Type: application/json
 
 {
   "query": "我之前写的云端文件保存方案",
-  "limit": 20
+  "limit": 8,
+  "fallbackOnly": true
 }
 ```
+
+Semantic search is a fallback by default: if a literal title/body match exists,
+the endpoint returns no semantic results and does not invoke Workers AI. Send
+`fallbackOnly: false` only for diagnostics or a client that explicitly wants a
+hybrid result set. The response includes `topK`, `candidateCount`, and
+`topCandidateScore` for calibration; cosine scores are ranking signals, not
+probabilities. `Server-Timing` separates embedding, Vectorize, and total
+latency. The configured `SEMANTIC_TOP_K` and the server hard limit both prevent
+legacy clients from requesting more than eight displayed results.
 
 Both endpoints return `results`. Each result includes the complete note plus:
 
@@ -415,16 +426,23 @@ Both endpoints return `results`. Each result includes the complete note plus:
 }
 ```
 
-The frontend can show lexical results immediately, then merge semantic results
-with Reciprocal Rank Fusion. Exact literal matches should retain more weight
-than vector-only matches. Vector matches below `SEMANTIC_MIN_SCORE` are omitted;
-calibrate the default `0.45` against a real Chinese note corpus after deployment.
+The frontend should show literal results immediately and call semantic search
+only after a successful literal search returns zero rows. Vector matches below
+`SEMANTIC_MIN_SCORE` are omitted; calibrate the conservative default `0.45` against a real
+multilingual note corpus after deployment.
 
 Index health is available at:
 
 ```http
 GET /api/search/status
 ```
+
+Besides status counts, this reports current-model D1 coverage, failure codes,
+the bound Vectorize dimensions/metric/count, and any definite D1-to-Vectorize
+count deficit. Migration `0004_rebuild_semantic_index.sql` schedules one safe,
+idempotent rebuild for existing notes. Cron checks every five minutes and also
+requeues current D1 rows automatically if the bound Vectorize index contains
+fewer vectors than D1 references.
 
 ## Queue consistency model
 

@@ -14,6 +14,7 @@ export interface Env {
   EMBEDDING_MODEL?: string;
   EMBEDDING_DIMENSIONS?: string;
   SEMANTIC_MIN_SCORE?: string;
+  SEMANTIC_TOP_K?: string;
   MAX_IMAGE_BYTES?: string;
   SESSION_TTL_DAYS?: string;
   TRASH_RETENTION_DAYS?: string;

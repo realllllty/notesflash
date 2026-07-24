@@ -6,6 +6,9 @@
   export let value = '';
   export let semanticSearching = false;
   export let semanticEnabled = true;
+  export let semanticResultCount = 0;
+  export let semanticError = false;
+  export let semanticLimit = 8;
   export let activeDescendant: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{
@@ -74,12 +77,26 @@
     />
 
     {#if semanticSearching}
-      <span class="tooltip tooltip-bottom" data-tip="正在补充语义结果">
+      <span
+        class="tooltip tooltip-bottom inline-flex items-center gap-1.5"
+        data-tip={`精准匹配为 0，正在请求语义 Top ${semanticLimit}`}
+      >
         <LoaderCircle size={15} class="animate-spin text-primary/70" />
+        <span class="hidden text-[10px] font-medium text-base-content/42 sm:inline">
+          请求 Top {semanticLimit}
+        </span>
       </span>
     {:else if semanticEnabled && value.trim()}
-      <span class="badge badge-ghost badge-sm hidden gap-1 border-base-content/8 bg-base-200/55 text-[10px] font-medium tracking-wide text-base-content/42 sm:inline-flex">
-        语义
+      <span
+        class:semantic-results-badge={semanticResultCount > 0}
+        class:semantic-error-badge={semanticError}
+        class="badge badge-ghost badge-sm hidden gap-1 border-base-content/8 bg-base-200/55 text-[10px] font-medium tracking-wide text-base-content/42 sm:inline-flex"
+      >
+        {semanticError
+          ? '语义不可用'
+          : semanticResultCount > 0
+            ? `语义 ${semanticResultCount} 条`
+            : '精准优先'}
       </span>
     {/if}
 
@@ -232,6 +249,24 @@
 
   .draft-title {
     background: color-mix(in oklab, var(--color-primary) 68%, var(--color-base-content) 12%);
+  }
+
+  .semantic-results-badge {
+    border-color: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    background: linear-gradient(
+      100deg,
+      color-mix(in oklab, #ff6b8a 13%, var(--color-base-100)),
+      color-mix(in oklab, #ffd166 13%, var(--color-base-100)),
+      color-mix(in oklab, #55d6be 13%, var(--color-base-100)),
+      color-mix(in oklab, #7c83ff 13%, var(--color-base-100))
+    );
+    color: color-mix(in oklab, var(--color-base-content) 68%, transparent);
+  }
+
+  .semantic-error-badge {
+    border-color: color-mix(in oklab, var(--color-error) 22%, transparent);
+    background: color-mix(in oklab, var(--color-error) 8%, var(--color-base-100));
+    color: color-mix(in oklab, var(--color-error) 72%, var(--color-base-content));
   }
 
   .draft-body {

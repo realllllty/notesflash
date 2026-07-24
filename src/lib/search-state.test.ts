@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { canCreateFromCompletedSearch, type CompletedSearchState } from './search-state';
+import {
+  canCreateFromCompletedSearch,
+  shouldRunSemanticFallback,
+  type CompletedSearchState
+} from './search-state';
 
 const completed: CompletedSearchState = {
   query: '新笔记',
@@ -37,5 +41,21 @@ describe('completed search creation gate', () => {
       semanticExpected: false,
       semanticSuccessfulGeneration: 0
     })).toBe(true);
+  });
+});
+
+describe('semantic fallback policy', () => {
+  it('runs only after an empty literal result', () => {
+    expect(shouldRunSemanticFallback('migrate', true, 0)).toBe(true);
+    expect(shouldRunSemanticFallback('migrate', true, 1)).toBe(false);
+  });
+
+  it('supports two-character Chinese queries and ignores one-character noise', () => {
+    expect(shouldRunSemanticFallback('迁移', true, 0)).toBe(true);
+    expect(shouldRunSemanticFallback('迁', true, 0)).toBe(false);
+  });
+
+  it('does not run when semantic search is disabled', () => {
+    expect(shouldRunSemanticFallback('migrate', false, 0)).toBe(false);
   });
 });

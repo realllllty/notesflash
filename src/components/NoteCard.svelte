@@ -13,6 +13,7 @@
   export let optionIndex = 0;
   export let activeRawLineIndex: number | null = null;
   export let activeTitle = false;
+  export let activeSemantic = false;
   export let layoutMode: NoteLayoutMode = 'flat';
 
   const dispatch = createEventDispatcher<{
@@ -21,6 +22,8 @@
 
   $: contentBlocks = parseNoteContent(hit.note.body, hit.note.images);
   $: contentLines = logicalNoteLines(contentBlocks);
+  $: semanticOnly = hit.matchType === 'semantic';
+  $: highlightQuery = semanticOnly ? '' : query;
 </script>
 
 <article
@@ -33,8 +36,8 @@
 >
   <header
     id={`note-${hit.note.id}-title`}
-    class={`note-card-header mb-2 flex items-start gap-3 ${activeTitle ? 'current-title-match' : ''}`}
-    aria-current={activeTitle ? 'true' : undefined}
+    class={`note-card-header mb-2 flex items-start gap-3 ${activeTitle ? 'current-title-match' : ''} ${activeSemantic ? 'current-semantic-match' : ''}`}
+    aria-current={activeTitle || activeSemantic ? 'true' : undefined}
   >
     <div
       class="min-w-0 flex-1 cursor-text text-left outline-none"
@@ -46,14 +49,18 @@
         (event.key === 'Enter' || event.key === ' ') && dispatch('edit', { source: 'title' })}
     >
       <h2 class="break-words text-[15px] font-semibold leading-6 tracking-[-0.01em]">
-        <HighlightedText text={hit.note.title || '无标题'} {query} />
+        <span class:semantic-title-ink={semanticOnly}>
+          <HighlightedText text={hit.note.title || '无标题'} query={highlightQuery} />
+        </span>
       </h2>
       <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-base-content/38">
         <time>{formatRelativeTime(hit.note.updatedAt)}</time>
         {#if hit.matchType === 'semantic' || hit.matchType === 'both'}
           <span class="semantic-tag inline-flex items-center gap-1.5 text-primary/72">
             <span class="semantic-dot" aria-hidden="true"></span>
-            {hit.matchType === 'both' ? '关键词 + 语义' : '语义相关'}
+            {hit.matchType === 'both'
+              ? '精准 + 语义'
+              : `语义 Top ${hit.semanticRank ?? optionIndex + 1}`}
           </span>
         {/if}
         {#if hit.note.images.length > 0}
@@ -83,7 +90,7 @@
         >
           <span class="note-line-number" aria-hidden="true">{line.displayLineNumber}</span>
           <div class="note-line-content">
-            {#if line.text}<HighlightedText text={line.text} {query} />{/if}
+            {#if line.text}<HighlightedText text={line.text} query={highlightQuery} />{/if}
           </div>
         </div>
       {:else}
@@ -172,8 +179,23 @@
     height: 5px;
     flex: none;
     border-radius: 999px;
-    background: color-mix(in oklab, var(--color-primary) 72%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 13%, transparent);
+    background: conic-gradient(#ff6b8a, #ffd166, #55d6be, #6ea8ff, #b47cff, #ff6b8a);
+    box-shadow: 0 0 0 3px color-mix(in oklab, #7c83ff 11%, transparent);
+  }
+
+  .semantic-title-ink {
+    border-radius: 0.18em;
+    padding-inline: 0.06em;
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, #ff6b8a 42%, transparent),
+      color-mix(in oklab, #ffd166 48%, transparent),
+      color-mix(in oklab, #55d6be 42%, transparent),
+      color-mix(in oklab, #6ea8ff 42%, transparent),
+      color-mix(in oklab, #b47cff 40%, transparent)
+    ) left 88% / 100% 0.42em no-repeat;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
   }
 
   .note-image-content :global(.mt-3) {

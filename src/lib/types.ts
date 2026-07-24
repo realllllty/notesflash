@@ -74,7 +74,7 @@ export interface NotesClient {
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, input: UpdateNoteInput): Promise<Note>;
   deleteNote(id: string, baseVersion: number): Promise<void>;
-  lexicalSearch(query: string): Promise<SearchHit[]>;
-  semanticSearch(query: string): Promise<SearchHit[]>;
+  lexicalSearch(query: string, signal?: AbortSignal): Promise<SearchHit[]>;
+  semanticSearch(query: string, limit?: number, signal?: AbortSignal): Promise<SearchHit[]>;
   uploadImage(file: File): Promise<ImageAsset>;
 }

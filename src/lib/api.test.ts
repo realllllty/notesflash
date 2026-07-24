@@ -98,6 +98,51 @@ describe('API endpoint and network errors', () => {
     expect(headers.get('authorization')).toBe('Bearer device-token');
   });
 
+  it('requests semantic Top 8 by default and forwards the cancellation signal', async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    vi.stubGlobal('fetch', browserFetch);
+    const client = new RemoteNotesClient({
+      endpoint: 'https://notesflash-cloud.example.workers.dev',
+      token: 'device-token'
+    });
+    const controller = new AbortController();
+
+    await client.semanticSearch('migrate', undefined, controller.signal);
+
+    const [url, init] = browserFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://notesflash-cloud.example.workers.dev/api/search/semantic');
+    expect(init.signal).toBe(controller.signal);
+    expect(JSON.parse(String(init.body))).toEqual({ query: 'migrate', limit: 8 });
+  });
+
+  it('forwards the cancellation signal to lexical search', async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    vi.stubGlobal('fetch', browserFetch);
+    const client = new RemoteNotesClient({
+      endpoint: 'https://notesflash-cloud.example.workers.dev',
+      token: 'device-token'
+    });
+    const controller = new AbortController();
+
+    await client.lexicalSearch('迁移', controller.signal);
+
+    const [url, init] = browserFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      'https://notesflash-cloud.example.workers.dev/api/search/lexical?q=%E8%BF%81%E7%A7%BB&limit=30'
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
   it('redacts credentials and pairing codes from network diagnostics', () => {
     expect(safeNetworkReason(
       'failed Bearer secret-token at https://example.com/?token=abc123 using NF-ABCDE-23456'

@@ -68,7 +68,7 @@ export function applyCors(response: Response, request: Request, env: Env): Respo
 
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
-  headers.set("access-control-expose-headers", "etag, x-request-id");
+  headers.set("access-control-expose-headers", "etag, server-timing, x-request-id");
   headers.append("vary", "Origin");
   return new Response(response.body, {
     status: response.status,

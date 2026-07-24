@@ -148,16 +148,19 @@ export class RemoteNotesClient implements NotesClient {
     });
   }
 
-  async lexicalSearch(query: string): Promise<SearchHit[]> {
-    const payload = await this.request(`/api/search/lexical?q=${encodeURIComponent(query)}`);
+  async lexicalSearch(query: string, signal?: AbortSignal): Promise<SearchHit[]> {
+    const payload = await this.request(`/api/search/lexical?q=${encodeURIComponent(query)}&limit=30`, {
+      signal
+    });
     return this.mapHits(payload, 'lexical');
   }
 
-  async semanticSearch(query: string): Promise<SearchHit[]> {
+  async semanticSearch(query: string, limit = 8, signal?: AbortSignal): Promise<SearchHit[]> {
     const payload = await this.request('/api/search/semantic', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, limit: 30 })
+      body: JSON.stringify({ query, limit }),
+      signal
     });
     return this.mapHits(payload, 'semantic');
   }
@@ -197,7 +200,8 @@ export class RemoteNotesClient implements NotesClient {
           : fallbackType === 'semantic'
             ? ''
             : makeSnippet(note.title, note.body, ''),
-        score: numberValue(value.score, 1 / (index + 1))
+        score: numberValue(value.score, 1 / (index + 1)),
+        semanticRank: fallbackType === 'semantic' ? index + 1 : undefined
       };
     });
   }
@@ -307,7 +311,8 @@ export class DemoNotesClient implements NotesClient {
     this.notes = this.notes.filter((item) => item.id !== id);
   }
 
-  async lexicalSearch(query: string): Promise<SearchHit[]> {
+  async lexicalSearch(query: string, signal?: AbortSignal): Promise<SearchHit[]> {
+    if (signal?.aborted) return [];
     const normalizedQuery = normalizeText(query);
     if (!normalizedQuery) return [];
 
@@ -336,9 +341,10 @@ export class DemoNotesClient implements NotesClient {
     return hits.sort((a, b) => b.score - a.score);
   }
 
-  async semanticSearch(query: string): Promise<SearchHit[]> {
+  async semanticSearch(query: string, limit = 8, signal?: AbortSignal): Promise<SearchHit[]> {
     const queryVector = characterNgrams(query);
     await delay(180);
+    if (signal?.aborted) return [];
 
     return this.notes
       .map((note) => {
@@ -352,7 +358,8 @@ export class DemoNotesClient implements NotesClient {
       })
       .filter((hit) => hit.score > 0.08)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
+      .slice(0, limit)
+      .map((hit, index) => ({ ...hit, semanticRank: index + 1 }));
   }
 
   async uploadImage(file: File): Promise<ImageAsset> {

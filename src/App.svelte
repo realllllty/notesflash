@@ -26,9 +26,10 @@
     retainActiveMatchKey,
     type SearchLineTarget
   } from './lib/search-lines';
-  import { canCreateFromCompletedSearch } from './lib/search-state';
+  import { searchLoadedNotes } from './lib/local-search';
+  import { canCreateFromCompletedSearch, shouldRunSemanticFallback } from './lib/search-state';
   import { isKeyboardOptionSelected, nextKeyboardSelection } from './lib/selection';
-  import { firstMatchingLine, isImeComposing, mergeSearchHits, normalizeText, parseQuickNoteInput } from './lib/text';
+  import { firstMatchingLine, isImeComposing, normalizeText, parseQuickNoteInput } from './lib/text';
   import type {
     ConnectionProfile,
     ImageAsset,
@@ -42,6 +43,8 @@
 
   type ConnectionStatus = 'checking' | 'online' | 'unreachable' | 'auth-invalid';
   type EditorFocusTarget = { source: 'title' } | { source: 'body'; rawLineIndex: number };
+  const SEARCH_DEBOUNCE_MS = 55;
+  const SEMANTIC_TOP_K = 8;
 
   let connection: ConnectionProfile | null = loadConnection();
   let client: NotesClient | null = connection ? new RemoteNotesClient(connection) : null;
@@ -68,6 +71,7 @@
   let noteLayoutMode: NoteLayoutMode = readPreference('note-layout', 'flat') === 'deck' ? 'deck' : 'flat';
   let wideCardsEnabled = readPreference('wide-cards', 'false') === 'true';
   let semanticEnabled = readPreference('semantic', 'true') === 'true';
+  let semanticErrorMessage = '';
   let themePreference = readPreference('theme', 'system') as 'system' | 'notesflash' | 'notesflash-dark';
   let errorMessage = '';
   let toastMessage = '';
@@ -76,7 +80,7 @@
   let deleteErrorMessage = '';
   let searchBar: SearchBar;
   let lexicalTimer: number | undefined;
-  let semanticTimer: number | undefined;
+  let searchAbortController: AbortController | null = null;
   let searchAnchorCorrectionTimer: number | undefined;
   let searchDeckResetFrame: number | undefined;
   let searchGeneration = 0;
@@ -84,8 +88,6 @@
   let lexicalSuccessfulGeneration = 0;
   let semanticSettledGeneration = 0;
   let semanticSuccessfulGeneration = 0;
-  let pendingSemanticGeneration = 0;
-  let pendingSemanticHits: SearchHit[] = [];
   let notesGeneration = 0;
   let lastNotesRefreshAt = 0;
   let activeEditor: {
@@ -108,14 +110,19 @@
   };
 
   $: baseVisibleHits = activeQuery.trim()
-    ? (mergeSearchHits(lexicalHits, semanticHits) as SearchHit[])
+    ? lexicalHits.length > 0 ? lexicalHits : semanticHits
     : notes.map((note) => ({ note, matchType: 'lexical', snippet: '', score: 0 }));
   $: visibleHits = baseVisibleHits;
   $: updateSearchTargets(visibleHits, activeQuery);
   $: activeMatchTarget = activeSearchLineTarget(searchTargets, activeMatchKey);
   $: maximumIndex = Math.max(0, visibleHits.length - 1);
   $: if (selectedIndex > maximumIndex) selectedIndex = maximumIndex;
-  $: semanticSearchExpected = Boolean(client && semanticEnabled && activeQuery.trim().length >= 3);
+  $: semanticSearchExpected = Boolean(
+    client &&
+    lexicalSettledGeneration === searchGeneration &&
+    lexicalSuccessfulGeneration === searchGeneration &&
+    shouldRunSemanticFallback(activeQuery, semanticEnabled, lexicalHits.length)
+  );
   $: searchPending = Boolean(activeQuery.trim()) && (
     lexicalSettledGeneration !== searchGeneration ||
     (semanticSearchExpected && semanticSettledGeneration !== searchGeneration)
@@ -169,7 +176,7 @@
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       preferredDark.removeEventListener('change', handlePreferredThemeChange);
       window.clearTimeout(lexicalTimer);
-      window.clearTimeout(semanticTimer);
+      searchAbortController?.abort();
       window.clearTimeout(searchAnchorCorrectionTimer);
       cancelSearchDeckReset();
       unlisteners.forEach((unlisten) => unlisten());
@@ -319,12 +326,13 @@
 
   function applyQuery(value: string, preserveResults = false): void {
     cancelSearchDeckReset();
+    searchAbortController?.abort();
     activeQuery = value;
     selectedIndex = 0;
     activeMatchKey = null;
     errorMessage = '';
+    semanticErrorMessage = '';
     window.clearTimeout(lexicalTimer);
-    window.clearTimeout(semanticTimer);
     semanticSearching = false;
     const generation = ++searchGeneration;
     const trimmed = value.trim();
@@ -337,67 +345,76 @@
     lexicalSuccessfulGeneration = 0;
     semanticSettledGeneration = 0;
     semanticSuccessfulGeneration = 0;
-    pendingSemanticGeneration = 0;
-    pendingSemanticHits = [];
 
     if (!trimmed || !client) {
+      searchAbortController = null;
       return;
     }
 
-    lexicalTimer = window.setTimeout(() => void performLexicalSearch(trimmed, generation), 120);
+    const controller = new AbortController();
+    searchAbortController = controller;
+    lexicalHits = searchLoadedNotes(notes, trimmed);
+    lexicalTimer = window.setTimeout(
+      () => void performLexicalSearch(trimmed, generation, controller.signal),
+      SEARCH_DEBOUNCE_MS
+    );
 
-    if (semanticEnabled && trimmed.length >= 3) {
-      semanticTimer = window.setTimeout(() => void performSemanticSearch(trimmed, generation), 360);
-    } else {
+    if (!shouldRunSemanticFallback(trimmed, semanticEnabled, 0)) {
       semanticHits = [];
       semanticSettledGeneration = generation;
       semanticSuccessfulGeneration = generation;
     }
   }
 
-  async function performLexicalSearch(value: string, generation: number): Promise<void> {
+  async function performLexicalSearch(
+    value: string,
+    generation: number,
+    signal: AbortSignal
+  ): Promise<void> {
     if (!client) return;
+    let completedHits: SearchHit[] | null = null;
     try {
-      const hits = await client.lexicalSearch(value);
+      const hits = await client.lexicalSearch(value, signal);
       if (generation === searchGeneration) {
         lexicalHits = hits;
         lexicalSuccessfulGeneration = generation;
+        completedHits = hits;
       }
     } catch (error) {
       if (generation === searchGeneration) handleError(error, '关键词搜索失败。');
     } finally {
       if (generation === searchGeneration) {
         lexicalSettledGeneration = generation;
-        if (pendingSemanticGeneration === generation) {
-          semanticHits = pendingSemanticHits;
-          pendingSemanticGeneration = 0;
-          pendingSemanticHits = [];
+        if (completedHits !== null && shouldRunSemanticFallback(value, semanticEnabled, completedHits.length)) {
+          void performSemanticSearch(value, generation, signal);
+        } else if (completedHits !== null) {
+          semanticHits = [];
+          semanticSettledGeneration = generation;
+          semanticSuccessfulGeneration = generation;
         }
       }
     }
   }
 
-  async function performSemanticSearch(value: string, generation: number): Promise<void> {
+  async function performSemanticSearch(
+    value: string,
+    generation: number,
+    signal: AbortSignal
+  ): Promise<void> {
     if (!client) return;
     semanticSearching = true;
+    semanticErrorMessage = '';
     try {
-      const hits = await client.semanticSearch(value);
+      const hits = await client.semanticSearch(value, SEMANTIC_TOP_K, signal);
       if (generation === searchGeneration) {
+        semanticHits = hits;
         semanticSuccessfulGeneration = generation;
-        if (lexicalSettledGeneration === generation) semanticHits = hits;
-        else {
-          pendingSemanticGeneration = generation;
-          pendingSemanticHits = hits;
-        }
       }
     } catch (error) {
-      if (generation === searchGeneration) {
+      if (generation === searchGeneration && !isAbortError(error)) {
         semanticHits = [];
-        pendingSemanticGeneration = 0;
-        pendingSemanticHits = [];
-        if (error instanceof ApiError && [402, 429, 503].includes(error.status)) {
-          showToast('语义搜索暂时不可用，已保留关键词结果。');
-        }
+        semanticErrorMessage = semanticFailureMessage(error);
+        showToast(`语义搜索不可用：${semanticErrorMessage}`);
       }
     } finally {
       if (generation === searchGeneration) {
@@ -950,7 +967,8 @@
     if (!next) {
       semanticHits = [];
       semanticSearching = false;
-      window.clearTimeout(semanticTimer);
+      semanticErrorMessage = '';
+      searchAbortController?.abort();
     }
     if (activeQuery.trim()) {
       applyQuery(activeQuery, true);
@@ -1040,6 +1058,20 @@
     }, 1800);
   }
 
+  function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === 'AbortError';
+  }
+
+  function semanticFailureMessage(error: unknown): string {
+    if (error instanceof ApiError) {
+      const details = [error.code ? `code ${error.code}` : '', `status ${error.status}`]
+        .filter(Boolean)
+        .join(' · ');
+      return `${error.message}（${details}）`;
+    }
+    return error instanceof Error ? error.message : '语义搜索请求失败。';
+  }
+
   function handleError(error: unknown, fallback: string): void {
     errorMessage = error instanceof Error ? error.message : fallback;
     updateConnectionStatus(error);
@@ -1087,6 +1119,9 @@
       value={query}
       {semanticSearching}
       {semanticEnabled}
+      semanticResultCount={semanticHits.length}
+      semanticError={Boolean(semanticErrorMessage)}
+      semanticLimit={SEMANTIC_TOP_K}
       {activeDescendant}
       on:input={(event) => updateQuery(event.detail)}
       on:keyaction={handleSearchKey}
@@ -1100,8 +1135,19 @@
             {#if querySaving}
               正在保存当前笔记并切换搜索…
             {:else if activeQuery.trim()}
-              {searchTargets.length} 处匹配 · {visibleHits.length} 条笔记
-              {#if semanticSearching} · 正在补充语义结果{/if}
+              {#if semanticSearching}
+                精准匹配 0 条 · 正在请求语义 Top {SEMANTIC_TOP_K}…
+              {:else if lexicalHits.length > 0}
+                {searchTargets.length} 处精准匹配 · {visibleHits.length} 条笔记
+              {:else if semanticHits.length > 0}
+                语义实际返回 {semanticHits.length} 条笔记
+              {:else if semanticErrorMessage}
+                精准匹配 0 条 · 语义搜索不可用
+              {:else if searchPending}
+                正在确认精准匹配…
+              {:else}
+                精准与语义均无匹配
+              {/if}
             {:else}
               {notes.length} 条笔记 · {noteLayoutMode === 'flat' ? '卡片平铺' : '叠卡抽牌'}
             {/if}
@@ -1166,8 +1212,12 @@
             <button class="btn btn-primary btn-sm mt-4" on:click={createFromQuery}>创建第一条</button>
           </div>
         {:else if visibleHits.length === 0 && activeQuery.trim()}
-          <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40">
-            {#if searchPending}
+          <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/40" aria-live="polite">
+            {#if semanticErrorMessage}
+              <span class="max-w-xl text-center text-error/80" role="alert">
+                语义搜索不可用：{semanticErrorMessage}
+              </span>
+            {:else if searchPending}
               <LoaderCircle size={16} class="animate-spin text-primary/70" /> 正在搜索匹配内容…
             {:else if canCreateFromSearch}
               没有现有匹配，可以直接创建。
@@ -1209,7 +1259,9 @@
                     activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
                       ? activeMatchTarget.rawLineIndex
                       : null}
-                    activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                    activeTitle={activeMatchTarget?.noteId === hit.note.id
+                      && activeMatchTarget.source === 'title'
+                      && !activeMatchTarget.semanticOnly}
                     layoutMode={noteLayoutMode}
                     on:contentchange={() => (activeMatchKey = null)}
                   />
@@ -1227,7 +1279,11 @@
                     activeRawLineIndex={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source === 'body'
                       ? activeMatchTarget.rawLineIndex
                       : null}
-                    activeTitle={activeMatchTarget?.noteId === hit.note.id && activeMatchTarget.source !== 'body'}
+                    activeTitle={activeMatchTarget?.noteId === hit.note.id
+                      && activeMatchTarget.source === 'title'
+                      && !activeMatchTarget.semanticOnly}
+                    activeSemantic={activeMatchTarget?.noteId === hit.note.id
+                      && activeMatchTarget.semanticOnly}
                     layoutMode={noteLayoutMode}
                     on:edit={(event) => void beginEditingAt(hit.note.id, event.detail)}
                   />

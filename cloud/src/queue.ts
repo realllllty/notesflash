@@ -1,6 +1,16 @@
 import { newId } from "./crypto";
 import { documentText, embedText } from "./embedding";
+import { AppError } from "./http";
 import type { EmbedNoteJob, Env, ImageRow, IndexJob, NoteRow } from "./types";
+
+function embeddingErrorCode(error: unknown): string {
+  if (error instanceof AppError) return error.code.slice(0, 100);
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" || typeof code === "number") return String(code).slice(0, 100);
+  }
+  return error instanceof Error ? error.name.slice(0, 100) : "UNKNOWN_ERROR";
+}
 
 async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
   const note = await env.DB.prepare(
@@ -105,7 +115,7 @@ export async function consumeIndexQueue(batch: MessageBatch<IndexJob>, env: Env)
            WHERE id = ? AND version = ? AND content_hash = ?`,
         )
           .bind(
-            error instanceof Error ? error.name.slice(0, 100) : "UNKNOWN_ERROR",
+            embeddingErrorCode(error),
             message.body.noteId,
             message.body.version,
             message.body.contentHash,
@@ -197,10 +207,57 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
     }
   }
 
+  // D1 can outlive or be rebound to a newly-created Vectorize index. In that
+  // case every note still says "ready", so the old repair query would never
+  // enqueue a replacement and semantic search would stay empty forever. A
+  // lower Vectorize count is definitive evidence that at least one live D1
+  // reference cannot be represented by the index; requeueing all current rows
+  // is idempotent and restores coverage without operator access to note text.
+  try {
+    const [details, currentReady] = await Promise.all([
+      env.VECTOR_INDEX.describe(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS count FROM notes
+         WHERE deleted_at IS NULL
+           AND embedding_status = 'ready'
+           AND embedding_model = ?
+           AND embedded_content_hash = content_hash
+           AND embedding_vector_id IS NOT NULL`,
+      )
+        .bind(env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3")
+        .first<{ count: number }>(),
+    ]);
+    const detailsRecord = details as unknown as Record<string, unknown>;
+    const vectorCount = typeof detailsRecord.vectorCount === "number"
+      ? detailsRecord.vectorCount
+      : details.vectorsCount ?? 0;
+    if (vectorCount < (currentReady?.count ?? 0)) {
+      console.warn(
+        "Vectorize contains fewer vectors than D1 references; scheduling a semantic rebuild",
+        vectorCount,
+        currentReady?.count ?? 0,
+      );
+      await env.DB.prepare(
+        `UPDATE notes SET embedding_status = 'pending', embedding_error_code = NULL
+         WHERE deleted_at IS NULL
+           AND embedding_status = 'ready'
+           AND embedding_model = ?
+           AND embedded_content_hash = content_hash
+           AND embedding_vector_id IS NOT NULL`,
+      )
+        .bind(env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3")
+        .run();
+    }
+  } catch (error) {
+    // Index diagnostics must never prevent normal pending/failed jobs from
+    // being retried. search/status exposes the describe failure to operators.
+    console.error("Could not verify Vectorize coverage", error);
+  }
+
   const staleBefore = Date.now() - 5 * 60 * 1000;
   const currentModel = env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3";
   const result = await env.DB.prepare(
-    `SELECT * FROM notes
+    `SELECT id, version, content_hash FROM notes
      WHERE deleted_at IS NULL
        AND (
          embedding_status = 'pending'
@@ -217,22 +274,27 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
          )
        )
      ORDER BY updated_at ASC
-     LIMIT 50`,
+     LIMIT 500`,
   )
     .bind(staleBefore, staleBefore, currentModel)
-    .all<NoteRow>();
+    .all<Pick<NoteRow, "id" | "version" | "content_hash">>();
 
   if (result.results.length === 0) return;
-  await env.INDEX_QUEUE.sendBatch(
-    result.results.map((note) => ({
-      body: {
-        type: "embed-note" as const,
-        eventId: newId(),
-        noteId: note.id,
-        version: note.version,
-        contentHash: note.content_hash,
-        createdAt: Date.now(),
-      },
-    })),
-  );
+  // Queue sendBatch accepts at most 100 messages. Selecting only identifiers
+  // above keeps a large repair pass cheap even when note bodies are large.
+  for (let offset = 0; offset < result.results.length; offset += 100) {
+    const chunk = result.results.slice(offset, offset + 100);
+    await env.INDEX_QUEUE.sendBatch(
+      chunk.map((note) => ({
+        body: {
+          type: "embed-note" as const,
+          eventId: newId(),
+          noteId: note.id,
+          version: note.version,
+          contentHash: note.content_hash,
+          createdAt: Date.now(),
+        },
+      })),
+    );
+  }
 }
