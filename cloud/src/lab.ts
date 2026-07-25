@@ -43,6 +43,7 @@ import { semanticSearch } from "./search";
 import { retrieveSemanticMatches } from "./semantic";
 import { semanticConfig } from "./semantic-config";
 import { refineSpans } from "./span-refine";
+import { DEFAULT_PRUNE, pruneOrphanChunkVectors } from "./vector-prune";
 import {
   aggregateChunkHits,
   cosineSimilarity,
@@ -116,6 +117,7 @@ interface LabBody {
   chunking?: unknown;
   fallbackOnly?: unknown;
   spanRefine?: unknown;
+  passes?: unknown;
 }
 
 interface CorpusNote {
@@ -716,6 +718,32 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
     `SELECT id, embedding_vector_id FROM notes WHERE title LIKE '[EVAL%'`,
   ).all<{ id: string; embedding_vector_id: string | null }>()).results;
 
+  // Chunk rows cascade away with the note, so their vector IDs must be read and
+  // deleted first; otherwise the vectors are orphaned inside Vectorize and keep
+  // consuming candidate slots at query time.
+  const chunkIds: string[] = [];
+  for (let offset = 0; offset < rows.length; offset += 40) {
+    const batch = rows.slice(offset, offset + 40).map((row) => row.id);
+    if (batch.length === 0) continue;
+    const chunkRows = (await context.env.DB.prepare(
+      `SELECT chunk_id FROM note_chunks WHERE note_id IN (${batch.map(() => "?").join(",")})`,
+    )
+      .bind(...batch)
+      .all<{ chunk_id: string }>()).results;
+    chunkIds.push(...chunkRows.map((row) => row.chunk_id));
+  }
+  let deletedChunkVectors = 0;
+  for (let offset = 0; offset < chunkIds.length; offset += 200) {
+    const batch = chunkIds.slice(offset, offset + 200);
+    try {
+      await context.env.CHUNK_INDEX.deleteByIds(batch);
+      deletedChunkVectors += batch.length;
+    } catch (error) {
+      console.error("Search lab could not delete eval chunk vectors", context.requestId, error);
+      break;
+    }
+  }
+
   const vectorIds = rows
     .map((row) => row.embedding_vector_id)
     .filter((value): value is string => typeof value === "string" && value.length > 0);
@@ -742,6 +770,7 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
     action: "cleanup",
     matchedNotes: rows.length,
     deletedRows: result.meta.changes ?? 0,
+    deletedChunkVectors,
     deletedVectors,
     prunedCache,
   });
@@ -975,6 +1004,30 @@ async function runApi(context: RequestContext, body: LabBody): Promise<Response>
   return json({ action: "api", includeText, fallbackOnly, queries: reports });
 }
 
+async function runPruneVectors(context: RequestContext, body: LabBody): Promise<Response> {
+  const passes = body.passes === undefined ? 1 : body.passes;
+  if (typeof passes !== "number" || !Number.isInteger(passes) || passes < 1 || passes > 20) {
+    throw invalid("passes must be an integer between 1 and 20.");
+  }
+  const config = semanticConfig(context.env);
+  const results = [];
+  for (let pass = 0; pass < passes; pass += 1) {
+    const result = await pruneOrphanChunkVectors(context.env, config.spec, {
+      ...DEFAULT_PRUNE,
+      probes: 8,
+    });
+    results.push(result);
+    if (result.orphaned === 0) break;
+  }
+
+  return json({
+    action: "prune-vectors",
+    passes: results.length,
+    deleted: results.reduce((sum, result) => sum + result.deleted, 0),
+    results,
+  });
+}
+
 export async function searchLab(context: RequestContext): Promise<Response> {
   // Rate limiting runs before authorization so a masked 404 cannot be used as a
   // cheap oracle for brute-forcing the token.
@@ -1005,6 +1058,8 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       return runSeed(context, body);
     case "cleanup":
       return runCleanup(context, body);
+    case "prune-vectors":
+      return runPruneVectors(context, body);
     case "reindex":
       return runReindex(context);
     case "whoami":
@@ -1017,7 +1072,7 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       });
     default:
       throw invalid(
-        'action must be one of "sweep", "live", "probe", "corpus-stats", "seed", "cleanup", "reindex", "whoami".',
+        'action must be one of "sweep", "live", "api", "probe", "corpus-stats", "seed", "cleanup", "prune-vectors", "reindex", "whoami".',
       );
   }
 }

@@ -3,6 +3,7 @@ import { newId } from "./crypto";
 import { embedTexts } from "./embedding-models";
 import { AppError } from "./http";
 import { semanticConfig } from "./semantic-config";
+import { pruneOrphanChunkVectors } from "./vector-prune";
 import type {
   DeleteChunksJob,
   EmbedNoteJob,
@@ -415,6 +416,18 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
     // Index diagnostics must never prevent normal pending/failed jobs from
     // being retried. search/status exposes the describe failure to operators.
     console.error("Could not verify Vectorize coverage", error);
+  }
+
+  // A hard-deleted note takes its chunk rows with it, so a vector can outlive
+  // every reference to it. Left alone, orphans consume candidate slots in each
+  // query; this bounded pass removes the ones a probe can reach.
+  try {
+    const result = await pruneOrphanChunkVectors(env, semanticConfig(env).spec);
+    if (result.deleted > 0) {
+      console.warn("Removed orphan chunk vectors", result.deleted, "of", result.inspected);
+    }
+  } catch (error) {
+    console.error("Orphan vector pruning failed", error);
   }
 
   const staleBefore = Date.now() - 5 * 60 * 1000;
