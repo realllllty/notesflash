@@ -1445,6 +1445,8 @@ async function runApi(context: RequestContext, body: LabBody): Promise<Response>
       topChunkScore: payload.topChunkScore,
       candidateChunkCount: payload.candidateChunkCount,
       candidateItemCount: payload.candidateItemCount,
+      validatedCandidateItemCount: payload.validatedCandidateItemCount,
+      providerCandidateDiagnostics: payload.providerCandidateDiagnostics,
       resolvedItemCount: payload.resolvedItemCount,
       matchedNoteCount: payload.matchedNoteCount,
       pendingIndexCount: payload.pendingIndexCount,

@@ -494,6 +494,8 @@ export interface AiSearchRetrieval {
   translationAttempted: boolean;
   translationFailed: boolean;
   responseChunkCount: number;
+  providerCandidateCount: number;
+  providerCandidateDiagnostics: Record<string, unknown>;
   validItemCount: number;
   matchedNoteCount: number;
   timings: {
@@ -505,29 +507,83 @@ export interface AiSearchRetrieval {
   };
 }
 
-function providerCandidates(response: AiSearchSearchResponse): AiSearchCandidate[] {
+function providerValueType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function providerCandidates(response: AiSearchSearchResponse): {
+  candidates: AiSearchCandidate[];
+  diagnostics: Record<string, unknown>;
+} {
   if (!response || !Array.isArray(response.chunks)) {
     throw new AppError(503, "INVALID_AI_SEARCH_RESPONSE", "Cloudflare AI Search returned invalid data.");
   }
   const candidates: AiSearchCandidate[] = [];
   const seenKeys = new Set<string>();
+  const counts = {
+    missingKey: 0,
+    duplicateKey: 0,
+    invalidScore: 0,
+    invalidSchemaVersion: 0,
+    invalidIndexHash: 0,
+    accepted: 0,
+    acceptedNotesFlashKeyShape: 0,
+  };
+  const metadataFields = new Set<string>();
+  const schemaVersionTypes = new Set<string>();
+  const indexHashTypes = new Set<string>();
   response.chunks.forEach((chunk, rank) => {
     const score = chunk?.score;
     const key = chunk?.item?.key;
     const metadata = chunk?.item?.metadata;
     const schemaVersion = metadata?.schema_version;
     const indexHash = metadata?.index_hash;
-    if (typeof key !== "string" || key.length === 0 || seenKeys.has(key)) return;
-    if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) return;
+    if (metadata && typeof metadata === "object") {
+      Object.keys(metadata).forEach((field) => metadataFields.add(field));
+    }
+    schemaVersionTypes.add(providerValueType(schemaVersion));
+    indexHashTypes.add(providerValueType(indexHash));
+    if (typeof key !== "string" || key.length === 0) {
+      counts.missingKey += 1;
+      return;
+    }
+    if (seenKeys.has(key)) {
+      counts.duplicateKey += 1;
+      return;
+    }
+    if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
+      counts.invalidScore += 1;
+      return;
+    }
     if (
       schemaVersion !== AI_SEARCH_ITEM_SCHEMA_VERSION &&
       schemaVersion !== String(AI_SEARCH_ITEM_SCHEMA_VERSION)
-    ) return;
-    if (typeof indexHash !== "string") return;
+    ) {
+      counts.invalidSchemaVersion += 1;
+      return;
+    }
+    if (typeof indexHash !== "string") {
+      counts.invalidIndexHash += 1;
+      return;
+    }
     seenKeys.add(key);
     candidates.push({ rank, score, key, indexHash });
+    counts.accepted += 1;
+    if (/^nf_[a-f0-9]{20}_(?:title|body_\d+(?:_part_\d+)?)_[a-f0-9]{64}\.txt$/.test(key)) {
+      counts.acceptedNotesFlashKeyShape += 1;
+    }
   });
-  return candidates;
+  return {
+    candidates,
+    diagnostics: {
+      ...counts,
+      metadataFields: [...metadataFields].sort(),
+      schemaVersionTypes: [...schemaVersionTypes].sort(),
+      indexHashTypes: [...indexHashTypes].sort(),
+    },
+  };
 }
 
 function mappingMatch(row: AiSearchItemRow, note: NoteRow, score: number): SearchMatch | null {
@@ -621,7 +677,8 @@ export async function searchAiSearchNotes(
     );
   }
   const searchMs = performance.now() - searchStarted;
-  const candidates = providerCandidates(response);
+  const candidateParse = providerCandidates(response);
+  const candidates = candidateParse.candidates;
 
   const resolveStarted = performance.now();
   const keys = candidates.map((candidate) => candidate.key);
@@ -700,6 +757,8 @@ export async function searchAiSearchNotes(
     translationAttempted: translation.attempted,
     translationFailed: translation.failed,
     responseChunkCount: response.chunks.length,
+    providerCandidateCount: candidates.length,
+    providerCandidateDiagnostics: candidateParse.diagnostics,
     validItemCount: mappings.length,
     matchedNoteCount: results.length,
     timings: {

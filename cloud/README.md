@@ -574,7 +574,8 @@ module scope because Cloudflare treats them as request-scoped I/O objects.
 The response identifies `backend: "cloudflare-ai-search"`,
 `rankingStrategy: "cloudflare-ai-search-hybrid-rrf"`,
 translation/rewrite/reranking state, anonymous
-provider/result counts, and phase timings. `Server-Timing` separates translation,
+provider/result counts, privacy-safe candidate-contract diagnostics, and phase
+timings. `Server-Timing` separates translation,
 managed retrieval, D1 resolution, hydration, and total latency. A provider or
 setup failure returns a stable `503`; it is never converted to `200` with an
 empty result set. Set `SEMANTIC_BACKEND=vectorize` only as an explicit deployment

@@ -210,6 +210,8 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
       topK,
       providerResultLimit: backendConfig.maxResults,
       candidateItemCount: retrieval.responseChunkCount,
+      validatedCandidateItemCount: retrieval.providerCandidateCount,
+      providerCandidateDiagnostics: retrieval.providerCandidateDiagnostics,
       resolvedItemCount: retrieval.validItemCount,
       matchedNoteCount: retrieval.matchedNoteCount,
       results: retrieval.results,
