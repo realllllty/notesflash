@@ -23,6 +23,13 @@
     "SEMANTIC_CHUNK_MAX_LINES": "3",
     "SEMANTIC_CHUNK_OVERLAP_LINES": "1",
     "SEMANTIC_CHUNK_TITLE_CONTEXT": "true",
+    // Narrows the highlighted range from the retrieved line window down to the
+    // sentence or clause that matched, using one extra batched embedding call.
+    "SEMANTIC_SPAN_REFINE": "true",
+    "SEMANTIC_SPAN_MIN_CHARS": "40",
+    "SEMANTIC_SPAN_MAX_CANDIDATES": "12",
+    "SEMANTIC_SPAN_MAX_NOTES": "1",
+    "SEMANTIC_SPAN_MIN_RATIO": "1",
     "SEMANTIC_TOP_K": "8",
     // Operator-only search lab. Keep disabled in the template: a deployment
     // inherits these values, and an enabled lab can read this instance's notes.

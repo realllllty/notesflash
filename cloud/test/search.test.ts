@@ -495,6 +495,45 @@ describe("chunk-level semantic search", () => {
     });
   });
 
+  it("narrows the highlighted span when refinement is enabled", async () => {
+    const note = crossLanguageNote;
+    const { requestContext } = context({
+      query: "span-refine-enabled-query",
+      notes: [note],
+      scores: {
+        "We migrate the legacy notes": 0.62,
+        // The refinement pass scores this candidate at least as well as the
+        // chunk, so the highlight narrows to the sentence.
+        "We migrate the legacy notes into the new schema.": 0.7,
+      },
+      env: { SEMANTIC_SPAN_REFINE: "true" },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      spanRefinement: { refinedMatchCount: number; candidateCount: number };
+      results: Array<{ matches: Array<{ text: string; charStart: number; charEnd: number }> }>;
+    };
+
+    expect(payload.spanRefinement.refinedMatchCount).toBe(1);
+    expect(payload.spanRefinement.candidateCount).toBeGreaterThan(0);
+    const [match] = payload.results[0].matches;
+    expect(match.text).toBe("We migrate the legacy notes into the new schema.");
+    expect(note.body.slice(match.charStart, match.charEnd)).toBe(match.text);
+  });
+
+  it("reports no refinement when the feature is off", async () => {
+    const { requestContext } = context({
+      query: "span-refine-disabled-query",
+      notes: [crossLanguageNote],
+      scores: { "We migrate the legacy notes": 0.62 },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      spanRefinement: unknown;
+    };
+    expect(payload.spanRefinement).toBeNull();
+  });
+
   it("exposes Server-Timing for each retrieval stage", async () => {
     const { requestContext } = context({
       query: "server-timing-query",

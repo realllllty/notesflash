@@ -37,7 +37,9 @@ export const DEFAULT_SPAN_REFINE: SpanRefineOptions = {
   enabled: false,
   minChunkChars: 40,
   maxCandidates: 12,
-  maxNotes: 3,
+  // Only the first result is refined: it is the line the user reads first, and
+  // each extra note adds a batch of candidates to the same request.
+  maxNotes: 1,
   // A narrowed span must score at least as well as the whole chunk. Anything
   // lower means the shorter text lost meaning, and the chunk is kept instead.
   minRatio: 1,
