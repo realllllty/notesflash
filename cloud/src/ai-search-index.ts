@@ -72,6 +72,29 @@ function errorCode(error: unknown): string {
   return "UNKNOWN_ERROR";
 }
 
+function providerUploadErrorCode(error: unknown, row: AiSearchItemRow): string {
+  const classified = errorCode(error);
+  if (classified !== "Error") return classified;
+  if (!(error instanceof Error)) return "AI_SEARCH_PROVIDER_ERROR";
+
+  const privateTokens = new Set(
+    (row.text.normalize("NFKC").toLocaleLowerCase().match(/[a-z0-9_-]+/g) ?? []),
+  );
+  let message = error.message
+    .replaceAll(row.item_key, "[item]")
+    .replaceAll(row.index_text_hash, "[hash]")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/["'`][^"'`]*["'`]/g, "[value]")
+    .replace(/[^\x20-\x7e]+/g, "[text]")
+    .replace(/\b[a-f0-9]{16,}\b/gi, "[hash]")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[token]");
+  message = message.replace(/[a-z0-9_-]+/gi, (token) =>
+    privateTokens.has(token.toLocaleLowerCase()) ? "[text]" : token
+  );
+  message = message.replace(/\s+/g, " ").trim().slice(0, 90);
+  return message.length > 0 ? `PROVIDER:${message}`.slice(0, 100) : "AI_SEARCH_PROVIDER_ERROR";
+}
+
 function isNotFound(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as Record<string, unknown>;
@@ -212,7 +235,7 @@ async function failProviderUpload(
        AND upload_token = ?`,
   )
     .bind(
-      errorCode(error),
+      providerUploadErrorCode(error, row),
       Date.now(),
       row.item_key,
       row.note_content_hash,
@@ -1140,7 +1163,10 @@ export async function syncAiSearchNote(env: Env, job: SyncAiSearchNoteJob): Prom
     try {
       await uploadItem(env, instance, note, item, row);
     } catch (error) {
-      if (!(error instanceof AppError && error.code === "AI_SEARCH_ITEM_RECOVERY_PENDING")) {
+      if (!(error instanceof AppError && [
+        "AI_SEARCH_ITEM_RECOVERY_PENDING",
+        "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+      ].includes(error.code))) {
         await env.DB.prepare(
           `UPDATE ai_search_items SET
              sync_state = CASE WHEN upload_token IS NULL THEN 'failed' ELSE sync_state END,

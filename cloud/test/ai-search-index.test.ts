@@ -769,6 +769,22 @@ describe("AI Search index synchronization", () => {
     expect(test.rows.some((row) => row.error_code?.includes("built-in storage"))).toBe(false);
   });
 
+  it("stores only a scrubbed provider upload summary for an unclassified error", async () => {
+    const providerError = new Error(
+      "Could not process recovery entry at https://provider.example/private/abc right now",
+    );
+    const test = harness({ uploadError: providerError });
+
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toMatchObject({
+      code: "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+    });
+
+    expect(test.rows.every((row) => row.error_code?.startsWith("PROVIDER:"))).toBe(true);
+    expect(test.rows.every((row) => !row.error_code?.includes("https://"))).toBe(true);
+    expect(test.rows.every((row) => !row.error_code?.includes(row.item_key))).toBe(true);
+    expect(test.rows.every((row) => !row.error_code?.includes(row.text))).toBe(true);
+  });
+
   it("resumes the official full-list cursor across invocations and finds an exact key on page two", async () => {
     const target = itemRow({ item_key: "page-two-target", item_id: null });
     const providerItems = [
