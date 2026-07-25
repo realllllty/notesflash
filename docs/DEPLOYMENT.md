@@ -375,7 +375,9 @@ guarded by note version/content hash. A failed AI Search upload does not update
 deleted-item cleanup independently. Hard deletion waits until both semantic
 indexes have released their external items. Provider upload, verify, and delete
 work is continued in pages of at most 200 items; the Queue consumer uses one
-message per invocation and at most six concurrent outbound operations. This
+message per invocation, one concurrent invocation, and at most six concurrent
+outbound operations inside it. The single-invocation cap prevents Queue
+autoscaling from multiplying the AI Search Items upload burst. This
 keeps a legal 2,000-item note below Cloudflare's per-invocation subrequest and
 simultaneous-connection limits instead of failing halfway through indexing.
 Provider writes and deletes also use a leased per-item D1 token, so cleanup

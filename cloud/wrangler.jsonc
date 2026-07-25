@@ -106,6 +106,8 @@
         "queue": "notesflash-index",
         // AI Search line synchronization is paged against the per-invocation
         // internal-subrequest budget, so one Queue message owns each invocation.
+        // Do not let Queue autoscaling multiply that provider-write burst.
+        "max_concurrency": 1,
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 5

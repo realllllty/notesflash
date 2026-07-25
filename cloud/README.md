@@ -565,6 +565,9 @@ the next page/pass in D1, checks exact item keys, and confirms a match with
 a completed page scan as proof that an item is absent. This keeps Queue retries,
 same-key `7042` recovery, disabled-backend cleanup, and search-lab deletion
 fail-closed without exceeding the six-connection or per-invocation budgets.
+The Queue consumer is capped at one invocation: each invocation may already
+perform up to six bounded provider writes, and Queue's default autoscaling would
+otherwise multiply that burst against the upstream Items API.
 
 The response identifies `backend: "cloudflare-ai-search"`,
 `rankingStrategy: "cloudflare-ai-search-hybrid-rrf"`,
