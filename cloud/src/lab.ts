@@ -761,6 +761,11 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
      FROM ai_search_items
      GROUP BY sync_state`,
   ).all<{ status: string; count: number }>()).results;
+  const aiItemKindStatusRows = (await context.env.DB.prepare(
+    `SELECT kind, sync_state AS status, COUNT(*) AS count
+     FROM ai_search_items
+     GROUP BY kind, sync_state`,
+  ).all<{ kind: string; status: string; count: number }>()).results;
   const aiErrorRows = (await context.env.DB.prepare(
     `SELECT ai_search_error_code AS code, COUNT(*) AS count
      FROM notes
@@ -849,6 +854,9 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
     aiSearchStatus: Object.fromEntries(aiStatusRows.map((row) => [row.status, row.count])),
     aiSearchItemsByState: Object.fromEntries(
       aiItemStatusRows.map((row) => [row.status, row.count]),
+    ),
+    aiSearchItemsByKindState: Object.fromEntries(
+      aiItemKindStatusRows.map((row) => [`${row.kind}:${row.status}`, row.count]),
     ),
     aiSearchErrors: Object.fromEntries(aiErrorRows.map((row) => [row.code, row.count])),
     aiSearchItemErrors: Object.fromEntries(

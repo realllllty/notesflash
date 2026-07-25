@@ -233,6 +233,19 @@ function stubContext(options: StubOptions) {
         },
         async all() {
           if (sql.includes("FROM ai_search_items")) {
+            if (sql.includes("GROUP BY kind, sync_state")) {
+              const counts = new Map<string, number>();
+              for (const row of aiSearchRows) {
+                const key = `${row.kind}:${row.sync_state}`;
+                counts.set(key, (counts.get(key) ?? 0) + 1);
+              }
+              return {
+                results: [...counts].map(([key, count]) => {
+                  const [kind, status] = key.split(":");
+                  return { kind, status, count };
+                }),
+              };
+            }
             if (sql.includes("GROUP BY error_code")) {
               const counts = new Map<string, number>();
               for (const row of aiSearchRows) {
@@ -1255,6 +1268,7 @@ describe("search lab corpus management", () => {
     expect(payload).toMatchObject({
       aiSearchStatus: { ready: 1 },
       aiSearchItemsByState: { ready: 1 },
+      aiSearchItemsByKindState: { "body:ready": 1 },
       aiSearchErrors: { AI_SEARCH_RATE_LIMITED: 1 },
       aiSearchItemErrors: { provider_validation_error: 1 },
       currentAiSearchItems: 1,
