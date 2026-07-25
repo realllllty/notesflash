@@ -35,6 +35,8 @@ export interface PruneResult {
   deleted: number;
   vectorCountBefore: number | null;
   vectorCountAfter: number | null;
+  /** Reason the deletion stopped early, if it did. */
+  error: string | null;
 }
 
 /** Deterministic pseudo-random unit vectors, so a pass is reproducible. */
@@ -98,12 +100,16 @@ export async function pruneOrphanChunkVectors(
 
   const orphans = ids.filter((id) => !known.has(id)).slice(0, options.maxDeletions);
   let deleted = 0;
+  let error: string | null = null;
   for (let offset = 0; offset < orphans.length; offset += DELETE_BATCH) {
     const batch = orphans.slice(offset, offset + DELETE_BATCH);
     try {
       await env.CHUNK_INDEX.deleteByIds(batch);
       deleted += batch.length;
-    } catch (error) {
+    } catch (failure) {
+      error = failure instanceof Error
+        ? `${failure.name}: ${failure.message}`.slice(0, 300)
+        : "unknown error";
       console.error("Could not delete orphan chunk vectors", error);
       break;
     }
@@ -115,5 +121,6 @@ export async function pruneOrphanChunkVectors(
     deleted,
     vectorCountBefore: before,
     vectorCountAfter: deleted > 0 ? await vectorCount(env) : before,
+    error,
   };
 }
