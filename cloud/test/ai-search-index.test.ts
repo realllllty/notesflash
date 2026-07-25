@@ -741,7 +741,7 @@ describe("AI Search index synchronization", () => {
     expect(test.rows.every((row) => row.item_id === null)).toBe(true);
     expect(test.rows.every((row) => row.sync_state === "failed")).toBe(true);
     expect(test.rows.every((row) => row.upload_token === null)).toBe(true);
-    expect(test.rows.every((row) => row.error_code === "Error")).toBe(true);
+    expect(test.rows.every((row) => row.error_code === "AI_SEARCH_RATE_LIMITED")).toBe(true);
   });
 
   it("retains a privacy-safe provider error token for aggregate diagnostics", async () => {
@@ -751,6 +751,16 @@ describe("AI Search index synchronization", () => {
     await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
 
     expect(test.rows.every((row) => row.error_code === "AI_SEARCH_RATE_LIMITED")).toBe(true);
+  });
+
+  it("categorizes provider prose without persisting the prose itself", async () => {
+    const providerError = new Error("The item already exists in built-in storage");
+    const test = harness({ uploadError: providerError });
+
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
+
+    expect(test.rows.every((row) => row.error_code === "AI_SEARCH_ITEM_CONFLICT")).toBe(true);
+    expect(test.rows.some((row) => row.error_code?.includes("built-in storage"))).toBe(false);
   });
 
   it("resumes the official full-list cursor across invocations and finds an exact key on page two", async () => {

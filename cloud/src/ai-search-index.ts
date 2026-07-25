@@ -42,8 +42,26 @@ function errorCode(error: unknown): string {
   }
   if (error instanceof Error) {
     const message = error.message.trim();
-    if (/\b429\b|rate.?limit|too many requests/i.test(message)) {
+    const diagnostic = `${error.name} ${message}`;
+    if (/\b429\b|rate.?limit|too many requests|quota/i.test(diagnostic)) {
       return "AI_SEARCH_RATE_LIMITED";
+    }
+    if (/metadata/i.test(diagnostic)) return "AI_SEARCH_INVALID_METADATA";
+    if (/already exists|already_exist|conflict|duplicate/i.test(diagnostic)) {
+      return "AI_SEARCH_ITEM_CONFLICT";
+    }
+    if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|permission/i.test(diagnostic)) {
+      return "AI_SEARCH_AUTH_ERROR";
+    }
+    if (/too large|file size|\b413\b/i.test(diagnostic)) return "AI_SEARCH_ITEM_TOO_LARGE";
+    if (/file format|unsupported.*(?:file|content)|mime|media type/i.test(diagnostic)) {
+      return "AI_SEARCH_ITEM_FORMAT_ERROR";
+    }
+    if (/D1_ERROR|SQLITE|database|constraint failed/i.test(diagnostic)) {
+      return "AI_SEARCH_DATABASE_ERROR";
+    }
+    if (/timeout|timed out|temporar|unavailable|internal error|\b5\d\d\b/i.test(diagnostic)) {
+      return "AI_SEARCH_PROVIDER_UNAVAILABLE";
     }
     // Provider validation errors are often stable machine tokens without a
     // separate numeric code. Keep only that privacy-safe shape; never persist
