@@ -21,7 +21,7 @@
  */
 import { authenticate } from "./auth";
 import { deleteAiSearchItemsForNotes } from "./ai-search-index";
-import { aiSearchConfig } from "./ai-search";
+import { aiSearchConfig, probeAiSearchProvider } from "./ai-search";
 import {
   buildNoteChunks,
   DEFAULT_CHUNKING,
@@ -1498,6 +1498,8 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       return runApi(context, body);
     case "probe":
       return runProbe(context, body);
+    case "provider-probe":
+      return json({ action: "provider-probe", ...await probeAiSearchProvider(context.env) });
     case "corpus-stats":
       return runCorpusStats(context, body);
     case "seed":
@@ -1518,7 +1520,7 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       });
     default:
       throw invalid(
-        'action must be one of "sweep", "live", "api", "probe", "corpus-stats", "seed", "cleanup", "prune-vectors", "reindex", "whoami".',
+        'action must be one of "sweep", "live", "api", "probe", "provider-probe", "corpus-stats", "seed", "cleanup", "prune-vectors", "reindex", "whoami".',
       );
   }
 }

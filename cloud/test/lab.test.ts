@@ -161,6 +161,12 @@ function stubContext(options: StubOptions) {
       };
     }),
     items: {
+      upload: vi.fn(async (key: string, _content: unknown, options?: { metadata?: unknown }) => ({
+        id: "private-provider-probe-id",
+        key,
+        status: "queued",
+        metadata: options?.metadata,
+      })),
       list: vi.fn(async (params: { key?: string }) => ({
         result: aiSearchRows
           .filter((row) => !params.key || row.item_key === params.key)
@@ -1236,5 +1242,24 @@ describe("search lab corpus management", () => {
     ]) {
       expect(serialized).not.toContain(secret);
     }
+  });
+
+  it("probes the AI Search Items contract without exposing provider identifiers", async () => {
+    const { context } = stubContext({
+      body: { action: "provider-probe" },
+      semanticBackend: "ai-search",
+    });
+
+    const payload = await (await searchLab(context)).json() as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      action: "provider-probe",
+      ok: true,
+      stage: "complete",
+      uploadStatus: "queued",
+      cleanup: { attempted: true, ok: true },
+    });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("private-provider-probe-id");
+    expect(serialized).not.toContain("nf_provider_probe");
   });
 });

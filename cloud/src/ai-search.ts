@@ -149,6 +149,116 @@ function providerErrorText(error: unknown): string {
     .join(" ");
 }
 
+function providerDiagnostic(error: unknown): {
+  name: string;
+  code: string | null;
+  message: string;
+} {
+  const record = error && typeof error === "object"
+    ? error as Record<string, unknown>
+    : {};
+  const rawMessage = typeof record.message === "string"
+    ? record.message
+    : error instanceof Error
+    ? error.message
+    : String(error);
+  // This is returned only by the authenticated operator lab, but provider
+  // messages still get a conservative scrub so account IDs, URLs, or opaque
+  // tokens cannot become observability output accidentally.
+  const message = rawMessage
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{48,}\b/g, "[redacted]")
+    .slice(0, 300);
+  const code = typeof record.code === "string" || typeof record.code === "number"
+    ? String(record.code).slice(0, 100)
+    : null;
+  const name = typeof record.name === "string"
+    ? record.name.slice(0, 100)
+    : error instanceof Error
+    ? error.name.slice(0, 100)
+    : "UNKNOWN_ERROR";
+  return { name, code, message };
+}
+
+/**
+ * Exercise the production namespace and built-in Items upload contract without
+ * reading a note. The protected search lab exposes only this anonymous result;
+ * the fixed synthetic item is deleted before the probe returns.
+ */
+export async function probeAiSearchProvider(env: Env): Promise<Record<string, unknown>> {
+  const config = aiSearchConfig(env);
+  if (!config.enabled || !env.AI_SEARCH) {
+    return {
+      ok: false,
+      stage: "binding",
+      error: {
+        name: "AppError",
+        code: "AI_SEARCH_SETUP_REQUIRED",
+        message: "Cloudflare AI Search is not bound to this Worker.",
+      },
+    };
+  }
+
+  const instance = env.AI_SEARCH.get(config.instanceName);
+  try {
+    await instance.info();
+  } catch (error) {
+    return { ok: false, stage: "instance-info", error: providerDiagnostic(error) };
+  }
+
+  const probeKey = `nf_provider_probe_body_0_${"0".repeat(64)}.txt`;
+  let uploaded: AiSearchItemInfo;
+  try {
+    uploaded = await instance.items.upload(
+      probeKey,
+      "NotesFlash Cloudflare AI Search provider diagnostic.",
+      {
+        metadata: {
+          schema_version: AI_SEARCH_ITEM_SCHEMA_VERSION,
+          kind: "body",
+          raw_line_index: 0,
+          index_hash: "0".repeat(64),
+        },
+      },
+    );
+  } catch (error) {
+    return { ok: false, stage: "item-upload", error: providerDiagnostic(error) };
+  }
+
+  const itemId = typeof uploaded.id === "string" && uploaded.id.length > 0
+    ? uploaded.id
+    : null;
+  let cleanup: Record<string, unknown> = { attempted: itemId !== null, ok: itemId === null };
+  if (itemId !== null) {
+    try {
+      await instance.items.delete(itemId);
+      cleanup = { attempted: true, ok: true };
+    } catch (error) {
+      cleanup = { attempted: true, ok: false, error: providerDiagnostic(error) };
+    }
+  }
+
+  if (itemId === null || uploaded.status === "error") {
+    return {
+      ok: false,
+      stage: itemId === null ? "item-response" : "item-processing",
+      uploadStatus: uploaded.status,
+      providerItemError: typeof uploaded.error === "string"
+        ? providerDiagnostic(new Error(uploaded.error))
+        : null,
+      cleanup,
+    };
+  }
+
+  return {
+    ok: cleanup.ok === true,
+    stage: cleanup.ok === true ? "complete" : "item-cleanup",
+    uploadStatus: uploaded.status,
+    cleanup,
+  };
+}
+
 function instanceNotFound(error: unknown): boolean {
   return /AiSearchNotFoundError|ai_search_not_found|\b7002\b|\b404\b/i.test(
     providerErrorText(error),
