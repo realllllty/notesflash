@@ -634,7 +634,7 @@ reduced-information surface rather than a secrecy boundary.
 | `api` | Call the real `/api/search/semantic` handler for the configured backend and verify the privacy-safe response contract, including that `charStart`/`charEnd` address the same hidden text. |
 | `probe` | Check which embedding models answer and how they score a known cross-language pair. |
 | `provider-probe` | Exercise the AI Search instance and a fixed synthetic Items upload/delete, returning only a scrubbed provider stage/error and no item key or ID. |
-| `corpus-stats` | Anonymous note, Vectorize, and AI Search state/item coverage counts; no provider key, item ID, note ID, or text. |
+| `corpus-stats` | Anonymous note, Vectorize, AI Search state/item coverage, and machine error-code counts; no provider key, item ID, note ID, or text. |
 | `seed` / `cleanup` | Insert or remove the evaluation corpus for both independent indexes. Cleanup deletes provider items before D1; for a large corpus it returns a bounded-progress `503` and must be retried before any note row is hard-deleted. |
 | `prune-vectors` | Delete chunk vectors that no longer belong to any note. |
 | `reindex` | Mark every live note pending and enqueue both Vectorize and AI Search jobs when AI Search maintenance is enabled. |

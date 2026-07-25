@@ -40,7 +40,18 @@ function errorCode(error: unknown): string {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string" || typeof code === "number") return String(code).slice(0, 100);
   }
-  return error instanceof Error ? error.name.slice(0, 100) : "UNKNOWN_ERROR";
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (/\b429\b|rate.?limit|too many requests/i.test(message)) {
+      return "AI_SEARCH_RATE_LIMITED";
+    }
+    // Provider validation errors are often stable machine tokens without a
+    // separate numeric code. Keep only that privacy-safe shape; never persist
+    // arbitrary prose that could echo an item key or request content.
+    if (/^[a-z][a-z0-9_.:-]{0,99}$/i.test(message)) return message;
+    return error.name.slice(0, 100);
+  }
+  return "UNKNOWN_ERROR";
 }
 
 function isNotFound(error: unknown): boolean {

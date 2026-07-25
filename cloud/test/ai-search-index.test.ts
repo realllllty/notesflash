@@ -741,6 +741,16 @@ describe("AI Search index synchronization", () => {
     expect(test.rows.every((row) => row.item_id === null)).toBe(true);
     expect(test.rows.every((row) => row.sync_state === "failed")).toBe(true);
     expect(test.rows.every((row) => row.upload_token === null)).toBe(true);
+    expect(test.rows.every((row) => row.error_code === "Error")).toBe(true);
+  });
+
+  it("retains a privacy-safe provider error token for aggregate diagnostics", async () => {
+    const providerError = new Error("rate_limit_exceeded");
+    const test = harness({ uploadError: providerError });
+
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
+
+    expect(test.rows.every((row) => row.error_code === "AI_SEARCH_RATE_LIMITED")).toBe(true);
   });
 
   it("resumes the official full-list cursor across invocations and finds an exact key on page two", async () => {

@@ -18,6 +18,7 @@ interface StubNote {
   embedding_status?: string;
   ai_search_status?: string;
   ai_search_indexed_content_hash?: string | null;
+  ai_search_error_code?: string | null;
 }
 
 interface StubOptions {
@@ -232,6 +233,14 @@ function stubContext(options: StubOptions) {
         },
         async all() {
           if (sql.includes("FROM ai_search_items")) {
+            if (sql.includes("GROUP BY error_code")) {
+              const counts = new Map<string, number>();
+              for (const row of aiSearchRows) {
+                if (row.error_code === null) continue;
+                counts.set(row.error_code, (counts.get(row.error_code) ?? 0) + 1);
+              }
+              return { results: [...counts].map(([code, count]) => ({ code, count })) };
+            }
             if (sql.includes("GROUP BY sync_state")) {
               const counts = new Map<string, number>();
               for (const row of aiSearchRows) {
@@ -329,6 +338,17 @@ function stubContext(options: StubOptions) {
           }
           if (sql.includes("GROUP BY ai_search_status")) {
             return { results: [{ status: "ready", count: notes.length }] };
+          }
+          if (sql.includes("GROUP BY ai_search_error_code")) {
+            const counts = new Map<string, number>();
+            for (const note of fullNotes) {
+              if (note.ai_search_error_code === null) continue;
+              counts.set(
+                note.ai_search_error_code,
+                (counts.get(note.ai_search_error_code) ?? 0) + 1,
+              );
+            }
+            return { results: [...counts].map(([code, count]) => ({ code, count })) };
           }
           return { results: [] };
         },
@@ -1215,10 +1235,14 @@ describe("search lab corpus management", () => {
   });
 
   it("reports only anonymous AI Search aggregate corpus statistics", async () => {
-    const current = evalNote("private-stats-note", "Private stats title", "Private stats body");
+    const current = {
+      ...evalNote("private-stats-note", "Private stats title", "Private stats body"),
+      ai_search_error_code: "AI_SEARCH_RATE_LIMITED",
+    };
     const item = aiSearchItem(current, {
       item_key: "private-stats-item-key",
       item_id: "private-stats-item-id",
+      error_code: "provider_validation_error",
     });
     const { context } = stubContext({
       body: { action: "corpus-stats" },
@@ -1231,6 +1255,8 @@ describe("search lab corpus management", () => {
     expect(payload).toMatchObject({
       aiSearchStatus: { ready: 1 },
       aiSearchItemsByState: { ready: 1 },
+      aiSearchErrors: { AI_SEARCH_RATE_LIMITED: 1 },
+      aiSearchItemErrors: { provider_validation_error: 1 },
       currentAiSearchItems: 1,
     });
     for (const secret of [

@@ -761,6 +761,18 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
      FROM ai_search_items
      GROUP BY sync_state`,
   ).all<{ status: string; count: number }>()).results;
+  const aiErrorRows = (await context.env.DB.prepare(
+    `SELECT ai_search_error_code AS code, COUNT(*) AS count
+     FROM notes
+     WHERE deleted_at IS NULL AND ai_search_error_code IS NOT NULL
+     GROUP BY ai_search_error_code`,
+  ).all<{ code: string; count: number }>()).results;
+  const aiItemErrorRows = (await context.env.DB.prepare(
+    `SELECT error_code AS code, COUNT(*) AS count
+     FROM ai_search_items
+     WHERE error_code IS NOT NULL
+     GROUP BY error_code`,
+  ).all<{ code: string; count: number }>()).results;
   const currentAiItemRow = await context.env.DB.prepare(
     `SELECT COUNT(*) AS count
      FROM ai_search_items a
@@ -837,6 +849,10 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
     aiSearchStatus: Object.fromEntries(aiStatusRows.map((row) => [row.status, row.count])),
     aiSearchItemsByState: Object.fromEntries(
       aiItemStatusRows.map((row) => [row.status, row.count]),
+    ),
+    aiSearchErrors: Object.fromEntries(aiErrorRows.map((row) => [row.code, row.count])),
+    aiSearchItemErrors: Object.fromEntries(
+      aiItemErrorRows.map((row) => [row.code, row.count]),
     ),
     currentAiSearchItems: currentAiItemRow?.count ?? 0,
     indexedChunkRows: indexedRow?.count ?? 0,
