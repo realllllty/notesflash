@@ -238,6 +238,17 @@ describe("Cloudflare AI Search instance ensure", () => {
     expect(test.update).not.toHaveBeenCalled();
   });
 
+  it("opens a fresh binding handle instead of caching request-scoped I/O", async () => {
+    const test = harness({ env: { AI_SEARCH_QUERY_TRANSLATION: "false" } });
+
+    await searchAiSearchNotes(test.env, "entry");
+    await searchAiSearchNotes(test.env, "entry");
+
+    expect(test.namespace.get).toHaveBeenCalledTimes(2);
+    expect(test.info).toHaveBeenCalledTimes(2);
+    expect(test.search).toHaveBeenCalledTimes(2);
+  });
+
   it("creates built-in Items storage only after a documented NotFound", async () => {
     const test = harness({
       instanceInfoError: notFoundError(),

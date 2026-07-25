@@ -101,8 +101,6 @@ export function aiSearchConfig(env: Env): AiSearchRuntimeConfig {
   };
 }
 
-const instancePromises = new WeakMap<object, Map<string, Promise<AiSearchInstance>>>();
-
 type AiSearchInstanceSettings = Omit<AiSearchConfig, "id" | "type" | "source" | "source_params">;
 type AiSearchMetadataField = {
   field_name: string;
@@ -403,20 +401,11 @@ export async function aiSearchInstance(
       "Cloudflare AI Search is not bound to this Worker.",
     );
   }
-  const namespace = env.AI_SEARCH as unknown as object;
-  let byName = instancePromises.get(namespace);
-  if (!byName) {
-    byName = new Map();
-    instancePromises.set(namespace, byName);
-  }
-  const existing = byName.get(config.instanceName);
-  if (existing) return existing;
-  const pending = openOrCreateInstance(env.AI_SEARCH, config).catch((error) => {
-    byName?.delete(config.instanceName);
-    throw error;
-  });
-  byName.set(config.instanceName, pending);
-  return pending;
+  // Binding handles and promises that resolve to them are request-scoped I/O
+  // objects. Module-level caching survives isolate reuse and makes a later
+  // HTTP/Queue invocation fail with "Cannot perform I/O on behalf of a
+  // different request." Open a fresh handle for every invocation instead.
+  return openOrCreateInstance(env.AI_SEARCH, config);
 }
 
 interface TranslationResult {

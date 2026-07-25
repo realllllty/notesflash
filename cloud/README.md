@@ -568,6 +568,8 @@ fail-closed without exceeding the six-connection or per-invocation budgets.
 The Queue consumer is capped at one invocation: each invocation may already
 perform up to six bounded provider writes, and Queue's default autoscaling would
 otherwise multiply that burst against the upstream Items API.
+AI Search binding handles are opened per invocation and are never cached in
+module scope because Cloudflare treats them as request-scoped I/O objects.
 
 The response identifies `backend: "cloudflare-ai-search"`,
 `rankingStrategy: "cloudflare-ai-search-hybrid-rrf"`,
