@@ -9,6 +9,7 @@
  *   seed [--no-enqueue]         Insert the [EVAL:*] corpus into the instance.
  *   cleanup [--prune-cache]     Hard-delete the [EVAL:*] corpus (and optionally the cache).
  *   sweep [options]             Run golden queries against strategy presets and record raw JSON.
+ *   live [options]              Score the deployed production ranking path (Vectorize recall).
  *   report [file] [--thresholds]  Score a recorded sweep; optionally grid-search thresholds.
  *
  * sweep options:
@@ -222,6 +223,62 @@ async function commandSweep(args) {
   reportRecord(record, loadJson("golden.json"), args);
 }
 
+async function commandLive(args) {
+  const golden = loadJson("golden.json");
+  const queries = selectQueries(args, golden);
+  if (queries.length === 0) throw new Error("No golden queries matched the filters.");
+
+  const record = {
+    createdAt: new Date().toISOString(),
+    corpus: "live",
+    strategies: {},
+    requests: [],
+  };
+
+  console.log("== live production path (/api/search/semantic ranking)");
+  for (const batch of chunked(queries, QUERIES_PER_REQUEST)) {
+    const { payload, elapsedMs } = await callLab({
+      action: "live",
+      includeText: true,
+      queries: batch.map((entry) => entry.query),
+    });
+    const bucket = record.strategies["live-production"] ?? {
+      name: "live-production",
+      model: payload.embeddingModel,
+      dimensions: payload.embeddingDimensions,
+      instruction: null,
+      chunking: payload.chunking,
+      aggregation: payload.aggregation,
+      chunkCount: null,
+      queries: {},
+    };
+    for (const queryReport of payload.queries) {
+      bucket.queries[queryReport.query] = queryReport;
+    }
+    record.strategies["live-production"] = bucket;
+    record.requests.push({ strategy: "live-production", queries: batch.length, elapsedMs });
+    const latencies = payload.queries.map((entry) => entry.elapsedMs);
+    console.log(
+      `  ${batch.length} queries in ${elapsedMs}ms (per-query ${Math.min(...latencies)}-${Math.max(...latencies)}ms)`,
+    );
+  }
+
+  mkdirSync(OUT_DIR, { recursive: true });
+  const file = resolve(OUT_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}-live.json`);
+  writeFileSync(file, JSON.stringify(record, null, 2));
+  console.log(`\nwrote ${file}`);
+
+  const latencies = Object.values(record.strategies["live-production"].queries)
+    .map((entry) => entry.elapsedMs)
+    .sort((left, right) => left - right);
+  console.log(
+    `latency p50=${latencies[Math.floor(latencies.length / 2)]}ms ` +
+      `p95=${latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))]}ms ` +
+      `max=${latencies[latencies.length - 1]}ms`,
+  );
+  reportRecord(record, golden, args);
+}
+
 function latestRecord() {
   const files = readdirSync(OUT_DIR)
     .filter((name) => name.endsWith(".json"))
@@ -389,6 +446,8 @@ async function main() {
       return commandCleanup(args);
     case "sweep":
       return commandSweep(args);
+    case "live":
+      return commandLive(args);
     case "report":
       return commandReport(args);
     default:

@@ -164,34 +164,33 @@ interface PendingNoteRow {
   title: string;
   body: string;
   content_hash: string;
+  total: number;
 }
 
 /**
  * Score notes the indexer has not reached yet. Bounded on purpose: this is a
  * freshness patch for a handful of just-saved notes, not a second search path.
+ * The window function returns the backlog size in the same round trip, which
+ * keeps the common "nothing pending" case down to one cheap query.
  */
 async function scorePendingNotes(
   env: Env,
   config: SemanticConfig,
   queryVector: number[],
 ): Promise<{ hits: ChunkHit[]; pendingNoteCount: number; scoredNoteCount: number }> {
-  const pending = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM notes
-     WHERE deleted_at IS NULL AND embedding_status != 'ready'`,
-  ).first<{ count: number }>();
-  const pendingNoteCount = pending?.count ?? 0;
-  if (pendingNoteCount === 0) {
-    return { hits: [], pendingNoteCount: 0, scoredNoteCount: 0 };
-  }
-
   const rows = (await env.DB.prepare(
-    `SELECT id, title, body, content_hash FROM notes
+    `SELECT id, title, body, content_hash, COUNT(*) OVER () AS total
+     FROM notes
      WHERE deleted_at IS NULL AND embedding_status != 'ready'
      ORDER BY updated_at DESC
      LIMIT ?`,
   )
     .bind(MAX_PENDING_NOTES_INLINE)
     .all<PendingNoteRow>()).results;
+  const pendingNoteCount = rows[0]?.total ?? 0;
+  if (rows.length === 0) {
+    return { hits: [], pendingNoteCount, scoredNoteCount: 0 };
+  }
 
   const chunks = rows.flatMap((row) =>
     buildNoteChunks({ title: row.title, body: row.body }, config.chunking).map((chunk) => ({
@@ -256,23 +255,27 @@ export async function retrieveSemanticMatches(
   const queryVector = await embedSearchQuery(env, config, query);
   const embeddingMs = performance.now() - embeddingStartedAt;
 
+  // Index recall and the freshness fallback are independent once the query is
+  // embedded, so they run together instead of adding their latencies.
   const vectorStartedAt = performance.now();
-  const matches = await queryChunkIndex(env, config, queryVector);
-  const vectorMs = performance.now() - vectorStartedAt;
-
-  const resolveStartedAt = performance.now();
-  const contexts = await loadChunkContexts(env, matches.map((match) => match.id));
-  const hits: ChunkHit[] = [];
-  for (const match of matches) {
-    const context = contexts.get(match.id);
-    if (!context) continue;
-    hits.push(hitFromChunk(context, match.score));
-  }
-  const resolveMs = performance.now() - resolveStartedAt;
-
-  const pendingStartedAt = performance.now();
-  const pending = await scorePendingNotes(env, config, queryVector);
-  const pendingMs = performance.now() - pendingStartedAt;
+  const [indexed, pending] = await Promise.all([
+    (async () => {
+      const matches = await queryChunkIndex(env, config, queryVector);
+      const vectorMs = performance.now() - vectorStartedAt;
+      const resolveStartedAt = performance.now();
+      const contexts = await loadChunkContexts(env, matches.map((match) => match.id));
+      const hits: ChunkHit[] = [];
+      for (const match of matches) {
+        const context = contexts.get(match.id);
+        if (!context) continue;
+        hits.push(hitFromChunk(context, match.score));
+      }
+      return { matches, hits, vectorMs, resolveMs: performance.now() - resolveStartedAt };
+    })(),
+    scorePendingNotes(env, config, queryVector),
+  ]);
+  const pendingMs = performance.now() - vectorStartedAt;
+  const hits = indexed.hits;
 
   // A note can appear in both sources during re-indexing; keep the stronger hit
   // per chunk anchor so the same line is never counted twice.
@@ -286,14 +289,14 @@ export async function retrieveSemanticMatches(
     queryVector,
     hits: combined,
     aggregation: aggregateChunkHits(combined, config.aggregation),
-    indexedCandidateCount: matches.length,
+    indexedCandidateCount: indexed.matches.length,
     resolvedCandidateCount: hits.length,
     pendingNoteCount: pending.pendingNoteCount,
     pendingNotesScored: pending.scoredNoteCount,
     timings: {
       embeddingMs,
-      vectorMs,
-      resolveMs,
+      vectorMs: indexed.vectorMs,
+      resolveMs: indexed.resolveMs,
       pendingMs,
     },
   };
