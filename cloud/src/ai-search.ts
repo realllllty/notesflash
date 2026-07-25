@@ -529,10 +529,12 @@ function providerCandidates(response: AiSearchSearchResponse): {
     invalidSchemaVersion: 0,
     invalidIndexHash: 0,
     accepted: 0,
+    notesFlashKeyShape: 0,
     acceptedNotesFlashKeyShape: 0,
   };
   const metadataFields = new Set<string>();
   const schemaVersionTypes = new Set<string>();
+  const schemaVersionValues = new Set<string>();
   const indexHashTypes = new Set<string>();
   response.chunks.forEach((chunk, rank) => {
     const score = chunk?.score;
@@ -544,6 +546,11 @@ function providerCandidates(response: AiSearchSearchResponse): {
       Object.keys(metadata).forEach((field) => metadataFields.add(field));
     }
     schemaVersionTypes.add(providerValueType(schemaVersion));
+    if (typeof schemaVersion === "number" && Number.isFinite(schemaVersion)) {
+      schemaVersionValues.add(String(schemaVersion));
+    } else if (typeof schemaVersion === "string" && /^-?\d+(?:\.\d+)?$/.test(schemaVersion)) {
+      schemaVersionValues.add(schemaVersion.slice(0, 20));
+    }
     indexHashTypes.add(providerValueType(indexHash));
     if (typeof key !== "string" || key.length === 0) {
       counts.missingKey += 1;
@@ -552,6 +559,9 @@ function providerCandidates(response: AiSearchSearchResponse): {
     if (seenKeys.has(key)) {
       counts.duplicateKey += 1;
       return;
+    }
+    if (/^nf_[a-f0-9]{20}_(?:title|body_\d+(?:_part_\d+)?)_[a-f0-9]{64}\.txt$/.test(key)) {
+      counts.notesFlashKeyShape += 1;
     }
     if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
       counts.invalidScore += 1;
@@ -581,6 +591,7 @@ function providerCandidates(response: AiSearchSearchResponse): {
       ...counts,
       metadataFields: [...metadataFields].sort(),
       schemaVersionTypes: [...schemaVersionTypes].sort(),
+      schemaVersionValues: [...schemaVersionValues].sort(),
       indexHashTypes: [...indexHashTypes].sort(),
     },
   };
