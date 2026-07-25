@@ -549,6 +549,12 @@ not uploaded. A legal line whose UTF-8 representation could exceed AI Search's
 line number. AI Search item state is independent from `embedding_status`, so an
 AI Search outage never causes the Vectorize fallback to be rebuilt or damaged.
 
+The Items Workers binding accepts custom metadata as `Record<string, string>`.
+NotesFlash therefore serializes even `number` schema fields such as
+`schema_version` and `raw_line_index`; AI Search casts them according to the
+instance's `custom_metadata` schema. This explicit conversion is required even
+though the current runtime TypeScript declaration is broader.
+
 Every provider upload is fenced in D1 with a leased operation token before the
 Worker writes AI Search. Cleanup waits for that fence, persists the returned
 provider ID, and only then deletes the provider item and its manifest row. If an

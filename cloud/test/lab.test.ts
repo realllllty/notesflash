@@ -1245,7 +1245,7 @@ describe("search lab corpus management", () => {
   });
 
   it("probes the AI Search Items contract without exposing provider identifiers", async () => {
-    const { context } = stubContext({
+    const { context, aiSearchInstance } = stubContext({
       body: { action: "provider-probe" },
       semanticBackend: "ai-search",
     });
@@ -1261,5 +1261,8 @@ describe("search lab corpus management", () => {
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("private-provider-probe-id");
     expect(serialized).not.toContain("nf_provider_probe");
+    const metadata = aiSearchInstance.items.upload.mock.calls[0]?.[2]?.metadata ?? {};
+    expect(metadata).toMatchObject({ schema_version: "1", raw_line_index: "0" });
+    expect(Object.values(metadata).every((value) => typeof value === "string")).toBe(true);
   });
 });

@@ -31,7 +31,8 @@ export interface DesiredAiSearchItem {
   /** Text uploaded to AI Search: one logical line or one bounded part of it. */
   indexText: string;
   indexTextHash: string;
-  metadata: Record<string, string | number>;
+  /** Items Workers binding accepts metadata values only as strings. */
+  metadata: Record<string, string>;
 }
 
 function trimmedOffsets(body: string, start: number, end: number): { start: number; end: number } {
@@ -111,9 +112,9 @@ export async function buildAiSearchItems(
       indexText,
       indexTextHash,
       metadata: {
-        schema_version: AI_SEARCH_ITEM_SCHEMA_VERSION,
+        schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
         kind,
-        raw_line_index: rawLineIndex ?? -1,
+        raw_line_index: String(rawLineIndex ?? -1),
         index_hash: indexTextHash,
       },
     });

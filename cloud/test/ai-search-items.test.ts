@@ -56,11 +56,12 @@ describe("AI Search line item builder", () => {
 
     for (const item of items) {
       expect(item.metadata).toMatchObject({
-        schema_version: AI_SEARCH_ITEM_SCHEMA_VERSION,
+        schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
         kind: item.kind,
-        raw_line_index: item.rawLineIndex ?? -1,
+        raw_line_index: String(item.rawLineIndex ?? -1),
         index_hash: item.indexTextHash,
       });
+      expect(Object.values(item.metadata).every((value) => typeof value === "string")).toBe(true);
       expect(item.metadata).not.toHaveProperty("note_id");
       expect(item.itemKey).toMatch(/^nf_[a-f0-9]{20}_(?:title|body_\d+)_[a-f0-9]{64}\.txt$/);
       expect(item.itemKey).not.toContain("private-note-id");

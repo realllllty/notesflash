@@ -668,10 +668,13 @@ describe("AI Search index synchronization", () => {
       expect(content).toEqual(expect.any(String));
       expect(uploadOptions).toMatchObject({
         metadata: {
-          schema_version: 1,
+          schema_version: "1",
           index_hash: expect.any(String),
         },
       });
+      expect(Object.values(uploadOptions?.metadata ?? {}).every(
+        (value) => typeof value === "string",
+      )).toBe(true);
       expect(uploadOptions?.metadata).not.toHaveProperty("note_id");
     }
     expect(test.sent).toHaveLength(1);
@@ -1355,8 +1358,16 @@ describe("AI Search index synchronization", () => {
     expect(test.upload).toHaveBeenCalledWith(
       stale.item_key,
       stale.text,
-      { metadata: expect.objectContaining({ index_hash: stale.index_text_hash }) },
+      {
+        metadata: expect.objectContaining({
+          schema_version: "1",
+          raw_line_index: "0",
+          index_hash: stale.index_text_hash,
+        }),
+      },
     );
+    const recoveryMetadata = test.upload.mock.calls[0]?.[2]?.metadata ?? {};
+    expect(Object.values(recoveryMetadata).every((value) => typeof value === "string")).toBe(true);
     expect(test.providerDelete).toHaveBeenCalledWith(`provider-${stale.item_key}`);
     expect(test.rows).toEqual([]);
     expect(deleted.ai_search_status).toBe("disabled");

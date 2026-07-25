@@ -71,8 +71,10 @@ function providerItemMatches(
   itemKey: string,
   indexTextHash: string,
 ): boolean {
+  const schemaVersion = info.metadata?.schema_version;
   return info.key === itemKey &&
-    info.metadata?.schema_version === AI_SEARCH_ITEM_SCHEMA_VERSION &&
+    (schemaVersion === AI_SEARCH_ITEM_SCHEMA_VERSION ||
+      schemaVersion === String(AI_SEARCH_ITEM_SCHEMA_VERSION)) &&
     info.metadata?.index_hash === indexTextHash;
 }
 
@@ -476,11 +478,11 @@ async function recoverProviderItem(
   return { state: "pending" };
 }
 
-function providerMetadataForRow(row: AiSearchItemRow): Record<string, string | number> {
+function providerMetadataForRow(row: AiSearchItemRow): Record<string, string> {
   return {
-    schema_version: AI_SEARCH_ITEM_SCHEMA_VERSION,
+    schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
     kind: row.kind,
-    raw_line_index: row.raw_line_index ?? -1,
+    raw_line_index: String(row.raw_line_index ?? -1),
     index_hash: row.index_text_hash,
   };
 }
