@@ -96,26 +96,20 @@ async function queryChunkIndex(
     .map((match) => ({ id: match.id, score: match.score }));
 }
 
-interface ChunkContext {
-  row: NoteChunkRow;
-  title: string;
-  body: string;
-}
-
 /**
  * Resolve chunk IDs to their line anchors, dropping anything that no longer
  * reflects a live note: deleted notes and chunks whose content hash has moved
  * on both disappear here, so a stale vector can never produce a phantom line.
+ * Only the stored chunk slice is transferred, never whole note bodies.
  */
-async function loadChunkContexts(
-  env: Env,
-  chunkIds: string[],
-): Promise<Map<string, ChunkContext>> {
-  const contexts = new Map<string, ChunkContext>();
+async function loadChunkRows(env: Env, chunkIds: string[]): Promise<NoteChunkRow[]> {
+  const rows: NoteChunkRow[] = [];
   for (let offset = 0; offset < chunkIds.length; offset += D1_PARAMETER_BATCH) {
     const batch = chunkIds.slice(offset, offset + D1_PARAMETER_BATCH);
-    const rows = (await env.DB.prepare(
-      `SELECT c.*, n.title AS note_title, n.body AS note_body
+    const result = await env.DB.prepare(
+      `SELECT c.chunk_id, c.note_id, c.content_hash, c.chunk_index, c.kind,
+              c.primary_line, c.line_start, c.line_end, c.char_start, c.char_end,
+              c.text, c.created_at
        FROM note_chunks c
        JOIN notes n ON n.id = c.note_id
        WHERE c.chunk_id IN (${batch.map(() => "?").join(",")})
@@ -123,27 +117,13 @@ async function loadChunkContexts(
          AND n.content_hash = c.content_hash`,
     )
       .bind(...batch)
-      .all<NoteChunkRow & { note_title: string; note_body: string }>()).results;
-    for (const row of rows) {
-      contexts.set(row.chunk_id, {
-        row,
-        title: row.note_title,
-        body: row.note_body,
-      });
-    }
+      .all<NoteChunkRow>();
+    rows.push(...result.results);
   }
-  return contexts;
+  return rows;
 }
 
-function chunkText(context: ChunkContext): string {
-  const { row } = context;
-  if (row.kind === "title") return context.title.trim();
-  if (row.char_start === null || row.char_end === null) return "";
-  return context.body.slice(row.char_start, row.char_end);
-}
-
-function hitFromChunk(context: ChunkContext, score: number): ChunkHit {
-  const { row } = context;
+function hitFromChunkRow(row: NoteChunkRow, score: number): ChunkHit {
   return {
     noteId: row.note_id,
     chunkId: row.chunk_id,
@@ -155,7 +135,7 @@ function hitFromChunk(context: ChunkContext, score: number): ChunkHit {
     charStart: row.char_start,
     charEnd: row.char_end,
     score,
-    text: chunkText(context),
+    text: row.text,
   };
 }
 
@@ -270,12 +250,13 @@ export async function retrieveSemanticMatches(
       const matches = await queryChunkIndex(env, config, queryVector);
       const vectorMs = performance.now() - vectorStartedAt;
       const resolveStartedAt = performance.now();
-      const contexts = await loadChunkContexts(env, matches.map((match) => match.id));
+      const rows = await loadChunkRows(env, matches.map((match) => match.id));
+      const rowById = new Map(rows.map((row) => [row.chunk_id, row]));
       const hits: ChunkHit[] = [];
       for (const match of matches) {
-        const context = contexts.get(match.id);
-        if (!context) continue;
-        hits.push(hitFromChunk(context, match.score));
+        const row = rowById.get(match.id);
+        if (!row) continue;
+        hits.push(hitFromChunkRow(row, match.score));
       }
       return { matches, hits, vectorMs, resolveMs: performance.now() - resolveStartedAt };
     })(),

@@ -64,6 +64,7 @@ function chunkRowsFor(notes: NoteRow[], chunking = DEFAULT_CHUNKING) {
       line_end: chunk.lineEnd,
       char_start: chunk.charStart,
       char_end: chunk.charEnd,
+      text: chunk.text,
       created_at: 4,
       note_title: row.title,
       note_body: row.body,

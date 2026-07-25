@@ -89,8 +89,8 @@ async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
       env.DB.prepare(
         `INSERT INTO note_chunks(
            chunk_id, note_id, content_hash, chunk_index, kind,
-           primary_line, line_start, line_end, char_start, char_end, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           primary_line, line_start, line_end, char_start, char_end, text, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         chunk.chunkId,
         note.id,
@@ -102,6 +102,7 @@ async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
         chunk.lineEnd,
         chunk.charStart,
         chunk.charEnd,
+        chunk.text,
         completedAt,
       )
     ),

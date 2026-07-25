@@ -129,6 +129,8 @@ export interface NoteChunkRow {
   line_end: number | null;
   char_start: number | null;
   char_end: number | null;
+  /** The exact slice this chunk covers, stored so search never reads bodies. */
+  text: string;
   created_at: number;
 }
 
