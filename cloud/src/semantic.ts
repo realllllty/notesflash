@@ -164,30 +164,37 @@ interface PendingNoteRow {
   title: string;
   body: string;
   content_hash: string;
-  total: number;
 }
 
 /**
  * Score notes the indexer has not reached yet. Bounded on purpose: this is a
  * freshness patch for a handful of just-saved notes, not a second search path.
- * The window function returns the backlog size in the same round trip, which
- * keeps the common "nothing pending" case down to one cheap query.
+ *
+ * The backlog check comes first and only reads a count from an indexed column,
+ * so the common "everything is indexed" case never pays for note bodies.
  */
 async function scorePendingNotes(
   env: Env,
   config: SemanticConfig,
   queryVector: number[],
 ): Promise<{ hits: ChunkHit[]; pendingNoteCount: number; scoredNoteCount: number }> {
+  const backlog = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM notes
+     WHERE deleted_at IS NULL AND embedding_status != 'ready'`,
+  ).first<{ count: number }>();
+  const pendingNoteCount = backlog?.count ?? 0;
+  if (pendingNoteCount === 0) {
+    return { hits: [], pendingNoteCount: 0, scoredNoteCount: 0 };
+  }
+
   const rows = (await env.DB.prepare(
-    `SELECT id, title, body, content_hash, COUNT(*) OVER () AS total
-     FROM notes
+    `SELECT id, title, body, content_hash FROM notes
      WHERE deleted_at IS NULL AND embedding_status != 'ready'
      ORDER BY updated_at DESC
      LIMIT ?`,
   )
     .bind(MAX_PENDING_NOTES_INLINE)
     .all<PendingNoteRow>()).results;
-  const pendingNoteCount = rows[0]?.total ?? 0;
   if (rows.length === 0) {
     return { hits: [], pendingNoteCount, scoredNoteCount: 0 };
   }

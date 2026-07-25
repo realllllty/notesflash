@@ -174,7 +174,6 @@ function context(options: ContextOptions) {
                 title: row.title,
                 body: row.body,
                 content_hash: row.content_hash,
-                total: pendingRows.length,
               })),
             };
           }
