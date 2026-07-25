@@ -155,6 +155,9 @@ export async function refineSpans(
     if (!hit || hit.charStart === null || hit.charEnd === null) continue;
     const text = hit.text ?? "";
     if (text.length < options.minChunkChars) continue;
+    // A single line that already reads as one statement needs no narrowing, and
+    // skipping it keeps the extra inference off the common path.
+    if (hit.lineStart === hit.lineEnd && text.length <= options.minChunkChars * 2) continue;
     const candidates = spanCandidates(text, options.maxCandidates);
     if (candidates.length === 0) continue;
     targets.push({ hit, candidates });
