@@ -636,7 +636,7 @@ reduced-information surface rather than a secrecy boundary.
 | `live` | Run the retained `legacy-vectorize` comparator directly. The response explicitly says `productionHandler: false`; it is not evidence about the active AI Search backend. |
 | `api` | Call the real `/api/search/semantic` handler for the configured backend and verify the privacy-safe response contract, including that `charStart`/`charEnd` address the same hidden text. |
 | `probe` | Check which embedding models answer and how they score a known cross-language pair. |
-| `provider-probe` | Exercise the AI Search instance and a fixed synthetic Items upload/delete, returning only a scrubbed provider stage/error and no item key or ID. |
+| `provider-probe` | Exercise the AI Search instance and a fixed synthetic Items upload/delete, returning only a whitelisted configuration summary plus scrubbed provider stage/error and no item key or ID. |
 | `corpus-stats` | Anonymous note, Vectorize, AI Search state/item coverage (including kind-by-state), and machine error-code counts; no provider key, item ID, note ID, or text. |
 | `seed` / `cleanup` | Insert or remove the evaluation corpus for both independent indexes. Cleanup deletes provider items before D1; for a large corpus it returns a bounded-progress `503` and must be retried before any note row is hard-deleted. |
 | `prune-vectors` | Delete chunk vectors that no longer belong to any note. |

@@ -1296,6 +1296,7 @@ describe("search lab corpus management", () => {
       ok: true,
       stage: "complete",
       uploadStatus: "queued",
+      instanceConfig: { configurationDrift: false },
       cleanup: { attempted: true, ok: true },
     });
     const serialized = JSON.stringify(payload);

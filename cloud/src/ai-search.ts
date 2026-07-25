@@ -201,11 +201,35 @@ export async function probeAiSearchProvider(env: Env): Promise<Record<string, un
   }
 
   const instance = env.AI_SEARCH.get(config.instanceName);
+  let info: AiSearchInstanceInfo;
   try {
-    await instance.info();
+    info = await instance.info();
   } catch (error) {
     return { ok: false, stage: "instance-info", error: providerDiagnostic(error) };
   }
+  const instanceConfig = {
+    status: typeof info.status === "string" ? info.status : null,
+    embeddingModel: info.embedding_model ?? null,
+    vectorIndex: info.index_method?.vector === true,
+    keywordIndex: info.index_method?.keyword === true,
+    fusionMethod: info.fusion_method ?? null,
+    keywordTokenizer: info.indexing_options?.keyword_tokenizer ?? null,
+    keywordMatchMode: info.retrieval_options?.keyword_match_mode ?? null,
+    rewriteQuery: info.rewrite_query ?? null,
+    reranking: info.reranking ?? null,
+    chunkSize: info.chunk_size ?? null,
+    chunkOverlap: info.chunk_overlap ?? null,
+    scoreThreshold: info.score_threshold ?? null,
+    maxResults: info.max_num_results ?? null,
+    cache: info.cache ?? null,
+    customMetadata: Array.isArray(info.custom_metadata)
+      ? info.custom_metadata.map((field) => ({
+        fieldName: field.field_name,
+        dataType: field.data_type,
+      }))
+      : [],
+    configurationDrift: instanceConfigDrift(info, config),
+  };
 
   const probeKey = `nf_provider_probe_body_0_${"0".repeat(64)}.txt`;
   let uploaded: AiSearchItemInfo;
@@ -223,7 +247,12 @@ export async function probeAiSearchProvider(env: Env): Promise<Record<string, un
       },
     );
   } catch (error) {
-    return { ok: false, stage: "item-upload", error: providerDiagnostic(error) };
+    return {
+      ok: false,
+      stage: "item-upload",
+      instanceConfig,
+      error: providerDiagnostic(error),
+    };
   }
 
   const itemId = typeof uploaded.id === "string" && uploaded.id.length > 0
@@ -247,6 +276,7 @@ export async function probeAiSearchProvider(env: Env): Promise<Record<string, un
       providerItemError: typeof uploaded.error === "string"
         ? providerDiagnostic(new Error(uploaded.error))
         : null,
+      instanceConfig,
       cleanup,
     };
   }
@@ -255,6 +285,7 @@ export async function probeAiSearchProvider(env: Env): Promise<Record<string, un
     ok: cleanup.ok === true,
     stage: cleanup.ok === true ? "complete" : "item-cleanup",
     uploadStatus: uploaded.status,
+    instanceConfig,
     cleanup,
   };
 }
