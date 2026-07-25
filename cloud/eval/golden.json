@@ -1,0 +1,162 @@
+{
+  "comment": "Expectations reference note keys plus a substring of the expected line, so line numbers are resolved from corpus.json at run time and stay correct when the corpus is edited.",
+  "queries": [
+    {
+      "query": "迁移",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "migrate-en", "lineIncludes": "migrate the legacy notes" }],
+      "forbid": ["migrate-distractor"]
+    },
+    {
+      "query": "数据迁移方案",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "migrate-en", "lineIncludes": "migrate the legacy notes" }]
+    },
+    {
+      "query": "deploy",
+      "scenario": "cross-language-en-to-zh",
+      "expect": [{ "key": "deploy-zh", "lineIncludes": "部署前先执行远程 migration" }]
+    },
+    {
+      "query": "how do I deploy a new version",
+      "scenario": "cross-language-en-to-zh",
+      "expect": [{ "key": "deploy-zh", "lineIncludes": "部署前先执行远程 migration" }]
+    },
+    {
+      "query": "配对码有效期",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "pairing-en", "lineIncludes": "pairing code expires after ten minutes" }]
+    },
+    {
+      "query": "trash retention period",
+      "scenario": "cross-language-en-to-zh",
+      "expect": [{ "key": "trash-zh", "lineIncludes": "回收站保留三十天" }]
+    },
+    {
+      "query": "回收站保留多久",
+      "scenario": "same-language-zh",
+      "expect": [{ "key": "trash-zh", "lineIncludes": "回收站保留三十天" }]
+    },
+    {
+      "query": "向量索引什么时候要重建",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "embedding-en", "lineIncludes": "Rebuild the index whenever" }]
+    },
+    {
+      "query": "vector index coverage broken",
+      "scenario": "same-language-en",
+      "expect": [
+        { "key": "embedding-en", "lineIncludes": "lower vector count" },
+        { "key": "long-ops", "lineIncludes": "向量数量少于数据库记录数" }
+      ]
+    },
+    {
+      "query": "keyboard shortcut to open the app",
+      "scenario": "cross-language-en-to-zh",
+      "expect": [{ "key": "keyboard-zh", "lineIncludes": "Command + Shift + Space" }]
+    },
+    {
+      "query": "复制命中行的按键",
+      "scenario": "same-language-zh",
+      "expect": [{ "key": "keyboard-zh", "lineIncludes": "按下 Tab 会复制命中行" }]
+    },
+    {
+      "query": "签名图片链接多久过期",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "image-en", "lineIncludes": "expire after twenty four hours" }]
+    },
+    {
+      "query": "device token validity",
+      "scenario": "cross-language-en-to-zh",
+      "expect": [{ "key": "auth-zh", "lineIncludes": "会话默认有效期一百八十天" }]
+    },
+    {
+      "query": "怎么让手机也能看笔记",
+      "scenario": "conceptual-zh",
+      "expect": [{ "key": "phone-access", "lineIncludes": "添加到主屏幕" }]
+    },
+    {
+      "query": "how do I lock out a laptop I lost",
+      "scenario": "conceptual-en",
+      "expect": [{ "key": "token-rotate", "lineIncludes": "Delete the missing device" }]
+    },
+    {
+      "query": "怎么省钱",
+      "scenario": "conceptual-zh",
+      "expect": [{ "key": "cost-control", "lineIncludes": "缓存起来可以显著降低推理开销" }]
+    },
+    {
+      "query": "如何降低 AI 调用开销",
+      "scenario": "conceptual-zh",
+      "expect": [{ "key": "cost-control", "lineIncludes": "缓存起来可以显著降低推理开销" }]
+    },
+    {
+      "query": "备份方案",
+      "scenario": "cross-language-zh-to-en",
+      "expect": [{ "key": "backup", "lineIncludes": "Export the notes table" }]
+    },
+    {
+      "query": "远程迁移命令",
+      "scenario": "identifier-zh",
+      "expect": [{ "key": "wrangler-cmds", "lineIncludes": "--remote" }]
+    },
+    {
+      "query": "apply migrations to the remote database command",
+      "scenario": "identifier-en",
+      "expect": [{ "key": "wrangler-cmds", "lineIncludes": "--remote" }]
+    },
+    {
+      "query": "SEMANTIC_MIN_COSINE 默认值",
+      "scenario": "identifier-mixed",
+      "expect": [{ "key": "env-vars", "lineIncludes": "SEMANTIC_MIN_COSINE defaults" }]
+    },
+    {
+      "query": "查询还没有索引好的笔记",
+      "scenario": "identifier-zh",
+      "expect": [{ "key": "sql-snippet", "lineIncludes": "embedding_status != 'ready'" }]
+    },
+    {
+      "query": "7 月 15 日的会议结论",
+      "scenario": "date-zh",
+      "expect": [{ "key": "meeting-0715", "lineIncludes": "2026-07-15 会议结论" }]
+    },
+    {
+      "query": "每百万 token 多少钱",
+      "scenario": "number-cross-language",
+      "expect": [{ "key": "pricing", "lineIncludes": "$0.012 per million input tokens" }]
+    },
+    {
+      "query": "索引数量和数据库不一致怎么办",
+      "scenario": "single-relevant-line",
+      "expect": [
+        { "key": "long-ops", "lineIncludes": "向量数量少于数据库记录数" },
+        { "key": "embedding-en", "lineIncludes": "lower vector count" }
+      ]
+    },
+    {
+      "query": "签名密钥泄露了怎么处理",
+      "scenario": "single-relevant-line",
+      "expect": [{ "key": "long-en-security", "lineIncludes": "Rotate the image signing key" }]
+    },
+    {
+      "query": "operator diagnostics before release",
+      "scenario": "single-relevant-line",
+      "expect": [{ "key": "long-en-security", "lineIncludes": "disable operator diagnostics" }]
+    },
+    {
+      "query": "螺旋星系的红移测量",
+      "scenario": "negative",
+      "expect": []
+    },
+    {
+      "query": "how to bake sourdough bread at home",
+      "scenario": "negative",
+      "expect": []
+    },
+    {
+      "query": "明天股市会涨吗",
+      "scenario": "negative",
+      "expect": []
+    }
+  ]
+}

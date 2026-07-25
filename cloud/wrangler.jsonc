@@ -12,6 +12,10 @@
     "RERANKER_MIN_SCORE": "0.05",
     "RERANKER_BODY_EXCERPT_CHARS": "1200",
     "SEMANTIC_TOP_K": "8",
+    // Operator-only search lab. Keep disabled in the template: a deployment
+    // inherits these values, and an enabled lab can read this instance's notes.
+    "LAB_ENABLED": "false",
+    "LAB_TOKEN_SHA256": "",
     "MAX_IMAGE_BYTES": "12582912",
     "SESSION_TTL_DAYS": "180",
     "TRASH_RETENTION_DAYS": "30"

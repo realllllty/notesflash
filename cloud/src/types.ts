@@ -27,9 +27,27 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   EMBEDDING_MODEL?: string;
   EMBEDDING_DIMENSIONS?: string;
+  EMBEDDING_INSTRUCTION?: string;
+  /** Legacy note-level reranker knobs; removed once chunk retrieval ships. */
   RERANKER_MIN_SCORE?: string;
   RERANKER_BODY_EXCERPT_CHARS?: string;
+  SEMANTIC_MIN_COSINE?: string;
+  SEMANTIC_RELATIVE_MIN_RATIO?: string;
+  SEMANTIC_MULTI_CHUNK_BONUS?: string;
+  SEMANTIC_MAX_BONUS_CHUNKS?: string;
+  SEMANTIC_MAX_MATCHES_PER_NOTE?: string;
+  SEMANTIC_CHUNK_TOP_K?: string;
+  SEMANTIC_CHUNK_TARGET_CHARS?: string;
+  SEMANTIC_CHUNK_MAX_CHARS?: string;
+  SEMANTIC_CHUNK_MIN_CHARS?: string;
+  SEMANTIC_CHUNK_MAX_LINES?: string;
+  SEMANTIC_CHUNK_OVERLAP_LINES?: string;
+  SEMANTIC_CHUNK_TITLE_CONTEXT?: string;
   SEMANTIC_TOP_K?: string;
+  /** Search lab kill switch; must be exactly "true" to expose the endpoint. */
+  LAB_ENABLED?: string;
+  /** SHA-256 hex of the lab token. The plaintext never enters the repository. */
+  LAB_TOKEN_SHA256?: string;
   MAX_IMAGE_BYTES?: string;
   SESSION_TTL_DAYS?: string;
   TRASH_RETENTION_DAYS?: string;

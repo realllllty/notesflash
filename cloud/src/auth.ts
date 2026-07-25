@@ -1,6 +1,7 @@
 import { constantTimeEqual, createPairingCode, newId, randomToken, sha256Hex } from "./crypto";
 import { getInstanceId } from "./db";
 import { AppError, json, readJson, requirePrincipal, requireString } from "./http";
+import { enforceRateLimit as sharedEnforceRateLimit } from "./rate-limit";
 import type { DevicePrincipal, Env, RequestContext } from "./types";
 
 interface SessionRow {
@@ -118,28 +119,13 @@ async function enforceRateLimit(
   limit: number,
   windowMs: number,
 ): Promise<void> {
-  const now = Date.now();
-  const windowStartedAt = Math.floor(now / windowMs) * windowMs;
-  const expiresAt = windowStartedAt + windowMs;
-  const clientAddress = context.request.headers.get("cf-connecting-ip") ?? "unknown";
-  const key = await sha256Hex(`${scope}:${clientAddress}:${windowStartedAt}`);
-  const row = await context.env.DB.prepare(
-    `INSERT INTO rate_limit_windows(key, scope, window_started_at, expires_at, attempts)
-     VALUES (?, ?, ?, ?, 1)
-     ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1
-     RETURNING attempts`,
-  )
-    .bind(key, scope, windowStartedAt, expiresAt)
-    .first<{ attempts: number }>();
-
-  if ((row?.attempts ?? limit + 1) > limit) {
-    throw new AppError(
-      429,
-      "RATE_LIMITED",
-      "Too many pairing attempts. Wait for the current rate-limit window to expire.",
-      { retryAfterMs: Math.max(0, expiresAt - now) },
-    );
-  }
+  await sharedEnforceRateLimit(
+    context,
+    scope,
+    limit,
+    windowMs,
+    "Too many pairing attempts. Wait for the current rate-limit window to expire.",
+  );
 }
 
 function sessionTtlMs(env: Env): number {

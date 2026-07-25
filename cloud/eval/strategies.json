@@ -1,0 +1,60 @@
+{
+  "comment": "Strategy presets for the search lab. Chunking and aggregation fields map 1:1 onto cloud/src/chunking.ts and cloud/src/semantic-core.ts, so a preset that wins here can be promoted to wrangler.jsonc unchanged.",
+  "presets": {
+    "note-level-bge": {
+      "note": "Approximates the pre-change behaviour: one big chunk per note.",
+      "model": "@cf/baai/bge-m3",
+      "chunking": { "targetChars": 2000, "maxChars": 4000, "maxLines": 12, "overlapLines": 0, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-bge": {
+      "note": "Default line-window chunking with title context.",
+      "model": "@cf/baai/bge-m3",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-bge-no-title": {
+      "note": "Same chunk shape without the title prefix, to measure title context.",
+      "model": "@cf/baai/bge-m3",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": false },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "single-line-bge": {
+      "note": "One logical line per chunk: the most precise anchor, least context.",
+      "model": "@cf/baai/bge-m3",
+      "chunking": { "targetChars": 60, "maxChars": 400, "minChars": 0, "maxLines": 1, "overlapLines": 0, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "wide-bge": {
+      "note": "Paragraph-sized windows, to see how much context helps recall.",
+      "model": "@cf/baai/bge-m3",
+      "chunking": { "targetChars": 500, "maxChars": 800, "maxLines": 6, "overlapLines": 2, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-qwen3": {
+      "note": "Qwen3 embedding with its default retrieval instruction.",
+      "model": "@cf/qwen/qwen3-embedding-0.6b",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-qwen3-bilingual": {
+      "note": "Qwen3 with an instruction that names the cross-language requirement.",
+      "model": "@cf/qwen/qwen3-embedding-0.6b",
+      "instruction": "Given a search query in any language, retrieve note lines with the same meaning, including lines written in a different language",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "single-line-qwen3": {
+      "note": "Qwen3 with one logical line per chunk.",
+      "model": "@cf/qwen/qwen3-embedding-0.6b",
+      "chunking": { "targetChars": 60, "maxChars": 400, "minChars": 0, "maxLines": 1, "overlapLines": 0, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-gemma": {
+      "note": "EmbeddingGemma 300M (768 dimensions) with line-window chunking.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    }
+  }
+}

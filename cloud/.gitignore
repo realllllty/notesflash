@@ -2,3 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 dist/
+
+# Operator-only search lab: the plaintext token must never be committed.
+.lab-token.local
+eval/out/

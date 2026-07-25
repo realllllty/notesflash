@@ -1,0 +1,255 @@
+{
+  "titlePrefix": "[EVAL:",
+  "notes": [
+    {
+      "key": "migrate-en",
+      "title": "Legacy data migration runbook",
+      "body": "Owner: platform team\nStatus: in review\nWe migrate the legacy notes into the new schema before the release freeze.\nRollback keeps the old table for one week.\nContact the on-call engineer if the row count differs."
+    },
+    {
+      "key": "deploy-zh",
+      "title": "上线部署流程",
+      "body": "负责人：后端\n部署前先执行远程 migration，再触发构建。\n构建成功后确认健康检查返回 200。\n如果健康检查失败就回滚到上一个版本。"
+    },
+    {
+      "key": "pairing-en",
+      "title": "Device pairing notes",
+      "body": "The pairing code expires after ten minutes and can only be used once.\nGenerate a new code from the settings dialog on a device that is already connected.\nRevoke a lost device from another paired device."
+    },
+    {
+      "key": "trash-zh",
+      "title": "回收站与保留期",
+      "body": "删除的笔记会在回收站保留三十天，超期后彻底清除。\n清理任务由定时触发器执行。\n目前恢复入口只有接口，没有界面。"
+    },
+    {
+      "key": "embedding-en",
+      "title": "Vector index maintenance",
+      "body": "The vector index stores one embedding per note line.\nRebuild the index whenever the embedding model changes.\nA lower vector count than the database row count means recall coverage is broken."
+    },
+    {
+      "key": "keyboard-zh",
+      "title": "快捷键说明",
+      "body": "全局唤起使用 Command + Shift + Space。\n上下方向键在结果之间移动，回车打开笔记。\n按下 Tab 会复制命中行并进入行内编辑。"
+    },
+    {
+      "key": "image-en",
+      "title": "Image storage design",
+      "body": "Image bytes live in a private object storage bucket.\nSigned image URLs expire after twenty four hours.\nThe signing key is generated once and stored in the database."
+    },
+    {
+      "key": "auth-zh",
+      "title": "设备认证与令牌",
+      "body": "设备令牌是高熵随机值，数据库只保存它的哈希。\n会话默认有效期一百八十天。\n吊销设备会同时失效它的会话和未使用的配对码。"
+    },
+    {
+      "key": "phone-access",
+      "title": "手机端使用方式",
+      "body": "手机不需要安装应用商店里的程序。\n在 Safari 里选择添加到主屏幕，就能像独立应用一样打开。\n离线时只能看到已经加载过的内容。"
+    },
+    {
+      "key": "token-rotate",
+      "title": "Lost device checklist",
+      "body": "Open the device list from a machine you still control.\nDelete the missing device so its sessions are revoked immediately.\nRotate the pairing code afterwards and tell the team."
+    },
+    {
+      "key": "cost-control",
+      "title": "推理成本控制",
+      "body": "把重复查询的向量缓存起来可以显著降低推理开销。\n批量请求比逐条请求便宜。\n只在精确搜索没有结果时才调用语义搜索。"
+    },
+    {
+      "key": "backup",
+      "title": "Database export plan",
+      "body": "Export the notes table every week.\nKeep three generations of exports.\nVerify a restore into a scratch database every quarter."
+    },
+    {
+      "key": "wrangler-cmds",
+      "title": "常用命令",
+      "body": "本地迁移：wrangler d1 migrations apply DB --local\n远程迁移：wrangler d1 migrations apply DB --remote\n部署：wrangler deploy\n干跑校验：wrangler deploy --dry-run"
+    },
+    {
+      "key": "env-vars",
+      "title": "Worker configuration keys",
+      "body": "SEMANTIC_MIN_COSINE defaults to 0.5\nSEMANTIC_CHUNK_TOP_K defaults to 40\nTRASH_RETENTION_DAYS defaults to 30\nSESSION_TTL_DAYS defaults to 180"
+    },
+    {
+      "key": "sql-snippet",
+      "title": "排查用 SQL",
+      "body": "SELECT id FROM notes WHERE embedding_status != 'ready' AND deleted_at IS NULL;\nSELECT COUNT(*) FROM note_chunks;\nDELETE FROM lab_embedding_cache;"
+    },
+    {
+      "key": "meeting-0715",
+      "title": "周会记录",
+      "body": "2026-07-15 会议结论：先解决跨语言召回，再做前端行内高亮。\n2026-07-08 会议结论：暂缓客户端签名与公证。\n下次会议时间 2026-07-22 上午十点。"
+    },
+    {
+      "key": "pricing",
+      "title": "Model pricing",
+      "body": "Text embeddings cost $0.012 per million input tokens.\nTranslation costs $0.34 per million tokens.\nThe budget alert triggers at fifty dollars per month."
+    },
+    {
+      "key": "long-ops",
+      "title": "运维手册",
+      "body": "本手册记录日常运维动作。\n每天检查健康接口是否返回 200。\n每天查看构建历史是否有失败记录。\n每周确认队列没有堆积。\n每周查看错误日志的前十条。\n关注请求延迟的九十五分位。\n关注推理调用次数的日环比。\n数据库空间超过八成需要告警。\n对象存储的孤儿文件每天清理一次。\n如果向量数量少于数据库记录数，就重新排队所有笔记重建索引。\n定时任务失败要人工重跑一次。\n配对码过期记录保留一天。\n会话过期记录立即清除。\n限流窗口过期即清除。\n图片上传超过十二兆会被拒绝。\n笔记正文上限是两百万字符。\n标题上限是五百字符。\n每次发布都要记录构建号。\n回滚要保留失败版本的日志。\n值班同学负责跟进告警。"
+    },
+    {
+      "key": "long-en-security",
+      "title": "Security review notes",
+      "body": "This note tracks open security questions.\nDevice tokens are opaque high entropy values.\nOnly hashes of tokens are stored.\nSessions expire after one hundred and eighty days.\nSetup uses a trust on first use window.\nThe first claim must happen immediately after deployment.\nRate limits are keyed by a hash of the client address.\nRaw client addresses are never persisted.\nRotate the image signing key if a signed URL ever leaks.\nAudit the device list after every team change.\nThe worker sees plaintext during inference.\nThis is not zero knowledge encryption.\nBackups inherit the same trust boundary.\nThird party analytics are not used.\nThe admin surface is limited to the deployment account.\nOperator diagnostics must not return note text by default.\nPublic releases must disable operator diagnostics.\nSecurity questions are reviewed every quarter."
+    },
+    {
+      "key": "deploy-distractor",
+      "title": "发布检查清单",
+      "body": "发布前确认版本号已经更新。\n确认变更记录写清楚了影响范围。\n确认回滚方案有人复核。\n发布后在群里同步结果。"
+    },
+    {
+      "key": "pairing-distractor",
+      "title": "Setup page copy",
+      "body": "The setup page explains the first claim.\nIt links to the deployment guide.\nIt reminds the operator to bookmark the worker address.\nIt does not expose any secret value."
+    },
+    {
+      "key": "embedding-distractor",
+      "title": "搜索交互备忘",
+      "body": "搜索框第一项永远是快速创建。\n命中行使用彩虹高亮。\n结果卡片保持平铺不折叠。\n滚动时命中行要自动对齐到阅读位置。"
+    },
+    {
+      "key": "migrate-distractor",
+      "title": "工位迁移安排",
+      "body": "下周五整层工位迁移到北楼。\n每人自己打包显示器和键盘。\n搬迁公司下午两点到。\n迁移当天不安排会议。"
+    },
+    {
+      "key": "lunch-noodles",
+      "title": "午餐记录",
+      "body": "今天吃了牛肉面，汤头偏咸。\n上次那家的辣油更香。\n下次试试隔壁的猪脚饭。"
+    },
+    {
+      "key": "gym-plan",
+      "title": "健身计划",
+      "body": "周一练背，周三练腿，周五练胸。\n每组之间休息九十秒。\n体重目标是七十公斤。"
+    },
+    {
+      "key": "book-notes",
+      "title": "读书笔记：技术管理",
+      "body": "一对一沟通要固定节奏。\n目标要能被观察到，而不是只能被感受到。\n招人时优先看解决问题的路径。"
+    },
+    {
+      "key": "travel-kyoto",
+      "title": "京都行程",
+      "body": "第一天伏见稻荷和东福寺。\n第二天岚山竹林，下午天龙寺。\n第三天二条城，晚上锦市场。"
+    },
+    {
+      "key": "recipe-braise",
+      "title": "红烧肉做法",
+      "body": "五花肉切块冷水下锅焯水。\n炒糖色到枣红再下肉翻炒。\n加热水小火炖四十分钟收汁。"
+    },
+    {
+      "key": "movie-list",
+      "title": "想看的电影",
+      "body": "沙丘第二部。\n奥本海默重看一次。\n一部老片：东京物语。"
+    },
+    {
+      "key": "gift-ideas",
+      "title": "礼物清单",
+      "body": "给爸的保温杯。\n给妈的按摩仪。\n给同事的咖啡礼盒。"
+    },
+    {
+      "key": "car-service",
+      "title": "汽车保养记录",
+      "body": "上次换机油是三万两千公里。\n刹车片还能用一万公里。\n轮胎明年春天要换。"
+    },
+    {
+      "key": "plants",
+      "title": "植物养护",
+      "body": "龟背竹两周浇一次水。\n琴叶榕怕直射光。\n多肉冬天要断水。"
+    },
+    {
+      "key": "coffee",
+      "title": "咖啡豆记录",
+      "body": "耶加雪菲，水洗，花香明显。\n曼特宁适合做冰滴。\n手冲水温九十二度最稳。"
+    },
+    {
+      "key": "english-words",
+      "title": "英语单词本",
+      "body": "resilient 有韧性的\nambiguous 含义不明的\nleverage 利用"
+    },
+    {
+      "key": "running-log",
+      "title": "跑步日志",
+      "body": "周二五公里，配速六分十秒。\n周四间歇跑八组四百米。\n周日长跑十五公里。"
+    },
+    {
+      "key": "dentist",
+      "title": "牙医预约",
+      "body": "洗牙预约在下周三下午三点。\n右下第二颗牙需要复查。\n记得带保险卡。"
+    },
+    {
+      "key": "rent",
+      "title": "房租与水电",
+      "body": "房租每月五号转账。\n水电物业合计大约四百。\n押金退还要提前一个月申请。"
+    },
+    {
+      "key": "shopping-list",
+      "title": "购物清单",
+      "body": "牛奶、鸡蛋、面包。\n洗衣液和垃圾袋。\n猫砂两包。"
+    },
+    {
+      "key": "guitar",
+      "title": "吉他练习",
+      "body": "先练大调音阶五个把位。\n和弦转换 C-G-Am-F 每天十分钟。\n节拍器从六十开始。"
+    },
+    {
+      "key": "photography",
+      "title": "摄影参数记录",
+      "body": "室内人像 f1.8，快门六十分之一。\n街拍用 f8 保证景深。\n夜景需要三脚架和两秒延时。"
+    },
+    {
+      "key": "board-games",
+      "title": "桌游规则备忘",
+      "body": "璀璨宝石先抢二级卡。\n卡卡颂修道院要留空位。\n阿瓦隆五人局梅林最关键。"
+    },
+    {
+      "key": "cats",
+      "title": "猫咪疫苗",
+      "body": "三联疫苗每年一次。\n驱虫每三个月一次。\n体重记录：四点二公斤。"
+    },
+    {
+      "key": "weather-notes",
+      "title": "天气与穿衣",
+      "body": "十五度以下要穿外套。\n下雨天优先穿防水鞋。\n夏天办公室空调很冷，备一件薄外套。"
+    },
+    {
+      "key": "podcast",
+      "title": "播客清单",
+      "body": "一个讲基础设施的技术播客。\n一个访谈类的中文节目。\n一个讲语言学的英文节目。"
+    },
+    {
+      "key": "hiking",
+      "title": "徒步路线",
+      "body": "西山环线全程十二公里。\n最好早上七点出发。\n夏天带两升水。"
+    },
+    {
+      "key": "sleep",
+      "title": "睡眠记录",
+      "body": "上周平均睡了六小时二十分。\n晚上十一点前上床明显更清醒。\n咖啡下午三点后不喝。"
+    },
+    {
+      "key": "budget",
+      "title": "月度预算",
+      "body": "固定支出：房租、通勤、话费。\n弹性支出控制在两千以内。\n每月存下收入的三成。"
+    },
+    {
+      "key": "birthday",
+      "title": "生日提醒",
+      "body": "四月十二日：表姐。\n八月三日：同事老王。\n十一月九日：妈妈。"
+    },
+    {
+      "key": "wine",
+      "title": "葡萄酒品尝笔记",
+      "body": "一支智利赤霞珠，单宁偏重。\n一支德国雷司令，酸度明亮。\n开瓶后醒酒半小时更顺。"
+    },
+    {
+      "key": "desk-setup",
+      "title": "桌面设备清单",
+      "body": "显示器支架已经换成气压式。\n键盘是七十五配列。\n还需要一个理线槽。"
+    }
+  ]
+}

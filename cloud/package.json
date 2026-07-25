@@ -15,6 +15,7 @@
     "deploy": "npm run db:migrate:remote && wrangler deploy",
     "deploy:worker": "wrangler deploy",
     "check": "tsc --noEmit",
+    "eval": "node eval/run-eval.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
   },

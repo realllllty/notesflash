@@ -20,12 +20,8 @@ import {
   updateNote,
 } from "./notes";
 import { consumeIndexQueue, retryPendingIndexes } from "./queue";
-import {
-  lexicalSearch,
-  migrateRerankerDiagnostic,
-  searchIndexStatus,
-  semanticSearch,
-} from "./search";
+import { lexicalSearch, searchIndexStatus, semanticSearch } from "./search";
+import { searchLab } from "./lab";
 import { setupPage } from "./setup-page";
 import type { Env, IndexJob, RequestContext } from "./types";
 
@@ -62,6 +58,13 @@ async function route(context: RequestContext): Promise<Response> {
     return getImage(context, publicImageId);
   }
 
+  // The search lab authenticates itself: either a hashed operator token or a
+  // paired device. It is routed before the shared device gate so an operator
+  // token works without a device session, and it masks failures as 404.
+  if (path === "/api/internal/search-lab" && method === "POST") {
+    return searchLab(context);
+  }
+
   context.principal = await authenticate(request, context.env) ?? undefined;
   if (!context.principal) {
     throw new AppError(401, "AUTH_REQUIRED", "A valid Bearer device token is required.");
@@ -90,9 +93,6 @@ async function route(context: RequestContext): Promise<Response> {
   if (path === "/api/search/lexical" && method === "GET") return lexicalSearch(context);
   if (path === "/api/search/semantic" && method === "POST") return semanticSearch(context);
   if (path === "/api/search/status" && method === "GET") return searchIndexStatus(context);
-  if (path === "/api/internal/reranker-migrate-diagnostic" && method === "POST") {
-    return migrateRerankerDiagnostic(context);
-  }
 
   if (path === "/api/images" && method === "POST") return uploadImage(context);
   const imageId = pathId(path, /^\/api\/images\/([^/]+)$/);

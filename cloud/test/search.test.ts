@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { migrateRerankerDiagnostic, semanticSearch } from "../src/search";
+import { semanticSearch } from "../src/search";
 import type { NoteRow, RequestContext } from "../src/types";
 
 interface ContextOptions {
@@ -283,51 +283,6 @@ describe("semantic all-note reranker search", () => {
       expect.objectContaining({ id: "note-1", score: 0.06876970827579498 }),
     ]);
     expect(vectorQuery).not.toHaveBeenCalled();
-  });
-
-  it("keeps the authenticated migration diagnostic anonymous and aggregate-only", async () => {
-    const sensitiveTitle = "cloud-service-center-39078 [Story] resouce-base库下线迁移";
-    const sensitiveBody = "服务端配置管理写\n服务端配置管理读";
-    const { requestContext, vectorQuery } = context({
-      query: "unused-diagnostic-request-body",
-      notes: [
-        note("a-private-note-id", sensitiveTitle, sensitiveBody),
-        note("z-other-private-id", "Unrelated", "ordinary release checklist"),
-      ],
-      rerankerOutput: { response: [{ id: 0, score: 0.06876970827579498 }] },
-    });
-
-    const response = await migrateRerankerDiagnostic(requestContext);
-    const payload = await response.json() as Record<string, unknown>;
-    const serialized = JSON.stringify(payload);
-
-    expect(payload).toMatchObject({
-      query: "migrate",
-      configuredThreshold: 0.05,
-      comparedNoteCount: 2,
-      migrationTargetCount: 1,
-      migrationTargetsInNormalTopK: 1,
-      migrationTargetScores: [0.06876970827579498],
-    });
-    expect(serialized).not.toContain(sensitiveTitle);
-    expect(serialized).not.toContain(sensitiveBody);
-    expect(serialized).not.toContain("a-private-note-id");
-    expect(serialized).not.toContain("z-other-private-id");
-    expect(vectorQuery).not.toHaveBeenCalled();
-  });
-
-  it("requires a device principal for the migration diagnostic", async () => {
-    const { requestContext, aiRun } = context({
-      query: "unauthenticated-diagnostic",
-      notes: [note("note-1", "数据库迁移", "正文")],
-    });
-    requestContext.principal = undefined;
-
-    await expect(migrateRerankerDiagnostic(requestContext)).rejects.toMatchObject({
-      status: 401,
-      code: "AUTH_REQUIRED",
-    });
-    expect(aiRun).not.toHaveBeenCalled();
   });
 
   it("uses only reranker scores for ordering and threshold filtering", async () => {
