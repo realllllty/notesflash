@@ -129,6 +129,19 @@ async function runStatements(env: Env, statements: D1PreparedStatement[]): Promi
   }
 }
 
+async function atStage<T>(
+  code: string,
+  message: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(503, code, message);
+  }
+}
+
 type ProviderRecovery =
   | { state: "found"; item: AiSearchItemInfo }
   | { state: "pending" };
@@ -591,7 +604,11 @@ async function uploadItem(
     }
     return;
   }
-  const uploadToken = await claimProviderUpload(env, note, row);
+  const uploadToken = await atStage(
+    "AI_SEARCH_UPLOAD_FENCE_FAILED",
+    "AI Search could not claim its durable upload fence.",
+    () => claimProviderUpload(env, note, row),
+  );
   if (!uploadToken) {
     throw new AppError(
       503,
@@ -612,7 +629,11 @@ async function uploadItem(
     // original failure semantics.
     if (!isItemKeyConflict(error)) {
       await failProviderUpload(env, row, uploadToken, error);
-      throw error;
+      throw new AppError(
+        503,
+        "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+        "Cloudflare AI Search rejected or could not accept an item upload.",
+      );
     }
     const recovery = await recoverProviderItem(env, instance, row);
     if (recovery.state !== "found") {
@@ -641,7 +662,12 @@ async function uploadItem(
   }
   const ready = (uploaded.status === "completed" || uploaded.status === "skipped") &&
     providerItemMatches(uploaded, item.itemKey, item.indexTextHash);
-  if (!await finishProviderUpload(env, row, uploadToken, uploaded, ready)) {
+  const persisted = await atStage(
+    "AI_SEARCH_UPLOAD_PERSIST_FAILED",
+    "AI Search could not persist the uploaded provider item.",
+    () => finishProviderUpload(env, row, uploadToken, uploaded, ready),
+  );
+  if (!persisted) {
     throw new AppError(
       503,
       "AI_SEARCH_ITEM_FENCE_LOST",
@@ -1042,49 +1068,71 @@ export async function syncAiSearchNote(env: Env, job: SyncAiSearchNoteJob): Prom
     return;
   }
   const instance = await aiSearchInstance(env, config);
-  const processingUpdate = await env.DB.prepare(
+  const processingUpdate = await atStage(
+    "AI_SEARCH_NOTE_STATE_FAILED",
+    "AI Search could not claim the current note generation.",
+    () => env.DB.prepare(
      `UPDATE notes SET
        ai_search_status = 'processing', ai_search_updated_at = ?, ai_search_error_code = NULL
      WHERE id = ? AND version = ? AND content_hash = ? AND deleted_at IS NULL
        AND ai_search_status != 'disabled'`,
   )
     .bind(Date.now(), note.id, note.version, note.content_hash)
-    .run();
+    .run(),
+  );
   if ((processingUpdate.meta.changes ?? 0) !== 1) return;
 
-  const desired = await buildAiSearchItems({
-    id: note.id,
-    title: note.title,
-    body: note.body,
-    version: note.version,
-    contentHash: note.content_hash,
-  }, config.maxItemsPerNote);
+  const desired = await atStage(
+    "AI_SEARCH_ITEM_BUILD_FAILED",
+    "AI Search could not build the note item manifest.",
+    () => buildAiSearchItems({
+      id: note.id,
+      title: note.title,
+      body: note.body,
+      version: note.version,
+      contentHash: note.content_hash,
+    }, config.maxItemsPerNote),
+  );
 
   // Hashing a very large note can yield while another device saves a new
   // version. Avoid writing a stale manifest when that race is already visible.
-  const stillCurrent = await env.DB.prepare(
+  const stillCurrent = await atStage(
+    "AI_SEARCH_NOTE_STATE_FAILED",
+    "AI Search could not verify the current note generation.",
+    () => env.DB.prepare(
     `SELECT 1 AS current FROM notes
      WHERE id = ? AND version = ? AND content_hash = ? AND deleted_at IS NULL
        AND ai_search_status = 'processing'`,
   )
     .bind(note.id, note.version, note.content_hash)
-    .first<{ current: number }>();
+    .first<{ current: number }>(),
+  );
   if (!stillCurrent) return;
   // Continuation jobs should not rewrite a 2000-line manifest before every
   // 200-item upload page. A partial/failed first pass does not satisfy this
   // exact key-set check and is rebuilt idempotently on retry.
-  if (!await manifestIsComplete(env, note, desired)) {
-    await markManifest(env, note, desired);
-  }
+  await atStage(
+    "AI_SEARCH_MANIFEST_FAILED",
+    "AI Search could not prepare its D1 item manifest.",
+    async () => {
+      if (!await manifestIsComplete(env, note, desired)) {
+        await markManifest(env, note, desired);
+      }
+    },
+  );
 
-  const rows = (await env.DB.prepare(
+  const rows = await atStage(
+    "AI_SEARCH_MANIFEST_READ_FAILED",
+    "AI Search could not read pending item uploads.",
+    async () => (await env.DB.prepare(
     `SELECT * FROM ai_search_items
      WHERE note_id = ? AND note_content_hash = ? AND note_version = ?
        AND sync_state IN ('pending', 'failed', 'uploading')
      ORDER BY item_index ASC LIMIT 200`,
   )
     .bind(note.id, note.content_hash, note.version)
-    .all<AiSearchItemRow>()).results.slice(0, AI_SEARCH_PAGE_SIZE);
+    .all<AiSearchItemRow>()).results.slice(0, AI_SEARCH_PAGE_SIZE),
+  );
   const desiredByKey = new Map(desired.map((item) => [item.itemKey, item]));
   await inBatches(rows, UPLOAD_CONCURRENCY, async (row) => {
     const item = desiredByKey.get(row.item_key);

@@ -735,7 +735,9 @@ describe("AI Search index synchronization", () => {
     const providerError = new Error("provider quota temporarily unavailable");
     const test = harness({ uploadError: providerError });
 
-    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toMatchObject({
+      code: "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+    });
 
     expect(test.providerList).not.toHaveBeenCalled();
     expect(test.rows.every((row) => row.item_id === null)).toBe(true);
@@ -748,7 +750,9 @@ describe("AI Search index synchronization", () => {
     const providerError = new Error("rate_limit_exceeded");
     const test = harness({ uploadError: providerError });
 
-    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toMatchObject({
+      code: "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+    });
 
     expect(test.rows.every((row) => row.error_code === "AI_SEARCH_RATE_LIMITED")).toBe(true);
   });
@@ -757,7 +761,9 @@ describe("AI Search index synchronization", () => {
     const providerError = new Error("The item already exists in built-in storage");
     const test = harness({ uploadError: providerError });
 
-    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toBe(providerError);
+    await expect(syncAiSearchNote(test.env, syncJob())).rejects.toMatchObject({
+      code: "AI_SEARCH_PROVIDER_UPLOAD_FAILED",
+    });
 
     expect(test.rows.every((row) => row.error_code === "AI_SEARCH_ITEM_CONFLICT")).toBe(true);
     expect(test.rows.some((row) => row.error_code?.includes("built-in storage"))).toBe(false);
