@@ -42,6 +42,11 @@ export interface Env {
   SEMANTIC_CHUNK_MAX_LINES?: string;
   SEMANTIC_CHUNK_OVERLAP_LINES?: string;
   SEMANTIC_CHUNK_TITLE_CONTEXT?: string;
+  SEMANTIC_SPAN_REFINE?: string;
+  SEMANTIC_SPAN_MIN_CHARS?: string;
+  SEMANTIC_SPAN_MAX_CANDIDATES?: string;
+  SEMANTIC_SPAN_MAX_NOTES?: string;
+  SEMANTIC_SPAN_MIN_RATIO?: string;
   SEMANTIC_TOP_K?: string;
   /** Search lab kill switch; must be exactly "true" to expose the endpoint. */
   LAB_ENABLED?: string;

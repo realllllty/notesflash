@@ -22,6 +22,7 @@ import {
   resolveAggregationOptions,
   type AggregationOptions,
 } from "./semantic-core";
+import { DEFAULT_SPAN_REFINE, type SpanRefineOptions } from "./span-refine";
 import type { Env } from "./types";
 
 export const DEFAULT_CHUNK_TOP_K = 40;
@@ -36,6 +37,7 @@ export interface SemanticConfig {
   aggregation: AggregationOptions;
   /** Chunk candidates pulled from Vectorize before aggregation. */
   chunkTopK: number;
+  spanRefine: SpanRefineOptions;
 }
 
 function configurationError(message: string): AppError {
@@ -114,11 +116,34 @@ export function semanticConfig(env: Env): SemanticConfig {
     throw configurationError(`SEMANTIC_CHUNK_TOP_K must be between 1 and ${MAX_CHUNK_TOP_K}.`);
   }
 
+  const spanRefine: SpanRefineOptions = {
+    enabled: booleanVar(env.SEMANTIC_SPAN_REFINE, "SEMANTIC_SPAN_REFINE")
+      ?? DEFAULT_SPAN_REFINE.enabled,
+    minChunkChars: integerVar(env.SEMANTIC_SPAN_MIN_CHARS, "SEMANTIC_SPAN_MIN_CHARS")
+      ?? DEFAULT_SPAN_REFINE.minChunkChars,
+    maxCandidates: integerVar(env.SEMANTIC_SPAN_MAX_CANDIDATES, "SEMANTIC_SPAN_MAX_CANDIDATES")
+      ?? DEFAULT_SPAN_REFINE.maxCandidates,
+    maxNotes: integerVar(env.SEMANTIC_SPAN_MAX_NOTES, "SEMANTIC_SPAN_MAX_NOTES")
+      ?? DEFAULT_SPAN_REFINE.maxNotes,
+    minRatio: numberVar(env.SEMANTIC_SPAN_MIN_RATIO, "SEMANTIC_SPAN_MIN_RATIO")
+      ?? DEFAULT_SPAN_REFINE.minRatio,
+  };
+  if (spanRefine.minChunkChars < 1 || spanRefine.maxCandidates < 1 || spanRefine.maxCandidates > 64) {
+    throw configurationError("SEMANTIC_SPAN_* values are out of range.");
+  }
+  if (spanRefine.maxNotes < 1 || spanRefine.maxNotes > 20) {
+    throw configurationError("SEMANTIC_SPAN_MAX_NOTES must be between 1 and 20.");
+  }
+  if (spanRefine.minRatio <= 0 || spanRefine.minRatio > 1) {
+    throw configurationError("SEMANTIC_SPAN_MIN_RATIO must be between 0 and 1.");
+  }
+
   return {
     spec,
     instruction: instruction && instruction.length > 0 ? instruction : undefined,
     chunking,
     aggregation,
     chunkTopK,
+    spanRefine,
   };
 }

@@ -2,6 +2,7 @@ import { hydrateNotes } from "./db";
 import { AppError, json, readJson, requirePrincipal, requireString } from "./http";
 import { retrieveSemanticMatches, toSearchMatch, type SemanticRetrieval } from "./semantic";
 import { semanticConfig, type SemanticConfig } from "./semantic-config";
+import { refineSpans } from "./span-refine";
 import type { NoteRow, RequestContext, SearchResult } from "./types";
 
 function searchLimit(value: string | null, fallback = 30): number {
@@ -163,18 +164,23 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
   const selected = retrieval.aggregation.notes;
 
   // Re-read and hydrate only notes that survived aggregation. A concurrent
-  // deletion naturally removes the note from the response.
+  // deletion naturally removes the note from the response. Span refinement is
+  // independent of hydration, so the two run together.
   const hydrationStartedAt = performance.now();
   const selectedIds = selected.map((note) => note.noteId);
-  const selectedRows = selectedIds.length === 0
-    ? []
-    : (await context.env.DB.prepare(
-      `SELECT * FROM notes
-       WHERE deleted_at IS NULL
-         AND id IN (${selectedIds.map(() => "?").join(",")})`,
-    )
-      .bind(...selectedIds)
-      .all<NoteRow>()).results;
+  const [selectedRows, refinement] = await Promise.all([
+    selectedIds.length === 0
+      ? Promise.resolve([])
+      : context.env.DB.prepare(
+        `SELECT * FROM notes
+         WHERE deleted_at IS NULL
+           AND id IN (${selectedIds.map(() => "?").join(",")})`,
+      )
+        .bind(...selectedIds)
+        .all<NoteRow>()
+        .then((result) => result.results),
+    refineSpans(context.env, config, retrieval.queryVector, selected, config.spanRefine),
+  ]);
   const selectedRowsById = new Map(selectedRows.map((row) => [row.id, row]));
   const notes = await hydrateNotes(
     context.env,
@@ -215,15 +221,28 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
     topChunkScore: retrieval.aggregation.topChunkScore,
     pendingIndexCount: retrieval.pendingNoteCount,
     pendingNotesScored: retrieval.pendingNotesScored,
+    spanRefinement: config.spanRefine.enabled
+      ? {
+        refinedMatchCount: refinement.refinedCount,
+        candidateCount: refinement.candidateCount,
+        aiCalls: refinement.aiCalls,
+      }
+      : null,
     results,
   }, 200, {
-    "server-timing": semanticServerTiming(retrieval, hydrationMs, performance.now() - startedAt),
+    "server-timing": semanticServerTiming(
+      retrieval,
+      hydrationMs,
+      refinement.durationMs,
+      performance.now() - startedAt,
+    ),
   });
 }
 
 function semanticServerTiming(
   retrieval: SemanticRetrieval,
   hydrate: number,
+  refine: number,
   total: number,
 ): string {
   return [
@@ -231,6 +250,7 @@ function semanticServerTiming(
     `vector;dur=${retrieval.timings.vectorMs.toFixed(1)}`,
     `resolve;dur=${retrieval.timings.resolveMs.toFixed(1)}`,
     `pending;dur=${retrieval.timings.pendingMs.toFixed(1)}`,
+    `refine;dur=${refine.toFixed(1)}`,
     `hydrate;dur=${hydrate.toFixed(1)}`,
     `total;dur=${total.toFixed(1)}`,
   ].join(", ");

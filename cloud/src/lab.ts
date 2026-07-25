@@ -42,6 +42,7 @@ import { enforceRateLimit } from "./rate-limit";
 import { semanticSearch } from "./search";
 import { retrieveSemanticMatches } from "./semantic";
 import { semanticConfig } from "./semantic-config";
+import { refineSpans } from "./span-refine";
 import {
   aggregateChunkHits,
   cosineSimilarity,
@@ -114,6 +115,7 @@ interface LabBody {
   models?: unknown;
   chunking?: unknown;
   fallbackOnly?: unknown;
+  spanRefine?: unknown;
 }
 
 interface CorpusNote {
@@ -783,12 +785,28 @@ async function runReindex(context: RequestContext): Promise<Response> {
 async function runLive(context: RequestContext, body: LabBody): Promise<Response> {
   const includeText = body.includeText === true;
   const queries = parseQueries(body);
-  const config = semanticConfig(context.env);
+  const baseConfig = semanticConfig(context.env);
+  if (body.spanRefine !== undefined && typeof body.spanRefine !== "boolean") {
+    throw invalid("spanRefine must be a boolean.");
+  }
+  const config = body.spanRefine === undefined
+    ? baseConfig
+    : {
+      ...baseConfig,
+      spanRefine: { ...baseConfig.spanRefine, enabled: body.spanRefine },
+    };
   const reports = [];
 
   for (const query of queries) {
     const startedAt = performance.now();
     const retrieval = await retrieveSemanticMatches(context.env, config, query);
+    const refinement = await refineSpans(
+      context.env,
+      config,
+      retrieval.queryVector,
+      retrieval.aggregation.notes,
+      config.spanRefine,
+    );
     const noteIds = retrieval.aggregation.notes.map((note) => note.noteId);
     const titles = new Map<string, string>();
     if (includeText && noteIds.length > 0) {
@@ -808,6 +826,13 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
         vectorMs: Number(retrieval.timings.vectorMs.toFixed(1)),
         resolveMs: Number(retrieval.timings.resolveMs.toFixed(1)),
         pendingMs: Number(retrieval.timings.pendingMs.toFixed(1)),
+        refineMs: Number(refinement.durationMs.toFixed(1)),
+      },
+      spanRefinement: {
+        enabled: config.spanRefine.enabled,
+        refinedMatchCount: refinement.refinedCount,
+        candidateCount: refinement.candidateCount,
+        aiCalls: refinement.aiCalls,
       },
       candidateChunkCount: retrieval.indexedCandidateCount,
       resolvedChunkCount: retrieval.resolvedCandidateCount,
