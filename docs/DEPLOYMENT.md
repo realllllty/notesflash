@@ -7,8 +7,8 @@ This document describes the MVP deployment model for NotesFlash:
 - every user deploys the NotesFlash Cloud worker into their own Cloudflare account;
 - the desktop and PWA pair with that worker using a short-lived one-time code;
 - note text is not persisted in a client-side note database;
-- note text and metadata live in D1, images live in R2, and the existing background vectors live in Vectorize;
-- character matching is performed against D1/FTS, while semantic matching sends every current non-deleted note excerpt directly to a Workers AI BGE reranker.
+- note text and metadata live in D1, images live in R2, and line-level chunk vectors live in Vectorize;
+- character matching is performed against D1/FTS, while semantic matching embeds the query once and retrieves line-level chunks from Vectorize.
 
 The publisher of NotesFlash does **not** need to run an OAuth callback or a data backend. Cloudflare handles the authorization needed to deploy the template. Runtime authentication is handled by the worker that belongs to the user.
 
@@ -23,8 +23,8 @@ macOS Tauri app ───────────────┐      PWA runnin
 PWA ──────────────────────────┼────────► Worker API and /setup
                               │                 ├── D1: notes, devices, sessions, FTS
 first-claim browser page ─────┘                 ├── R2: note images
-                                                ├── Workers AI: direct BGE reranker + background embeddings
-                                                ├── Vectorize: background index (not queried by semantic search)
+                                                ├── Workers AI: query and chunk embeddings
+                                                ├── Vectorize: line-level chunk vectors
                                                 └── Queue: asynchronous indexing
 ```
 
@@ -329,14 +329,15 @@ The deployment template declares the following bindings:
 | --- | --- | --- |
 | `DB` | D1 | note text, metadata, devices, sessions, pairing codes, character/FTS search state |
 | `IMAGES` | R2 | original note images and authorized image delivery |
-| `AI` | Workers AI | direct all-note reranking and background document embeddings |
-| `VECTOR_INDEX` | Vectorize | existing background index; not queried by semantic search |
-| `INDEX_QUEUE` | Queue | asynchronous embedding/index updates |
+| `AI` | Workers AI | query embeddings, chunk embeddings, optional span refinement |
+| `CHUNK_INDEX` | Vectorize | line-level chunk vectors queried by semantic search (768 dimensions, cosine) |
+| `VECTOR_INDEX` | Vectorize | legacy note-level index, kept only to clean up pre-upgrade vectors |
+| `INDEX_QUEUE` | Queue | asynchronous chunk indexing and vector deletion |
 | `ASSETS` | Worker Static Assets | same-origin PWA shell, manifest, service worker, and icons |
 
-When literal search is empty, semantic search reads every current non-deleted note from D1 and sends its title plus a bounded body prefix directly to `@cf/baai/bge-reranker-base`. `RERANKER_BODY_EXCERPT_CHARS` defaults to `1200` with a hard maximum of `4000`; `RERANKER_MIN_SCORE` defaults to `0.05`, which retains calibrated English-query to Chinese-note matches such as `migrate` to `迁移`, and must be recalibrated against representative multilingual positive and negative note pairs for each corpus. The query path does not call BGE-M3, Vectorize, or a vector candidate list. The existing BGE-M3/Vectorize background index remains bound for the current asynchronous indexing worker but is not read by `/api/search/semantic`.
+When literal search is empty, semantic search embeds the query once with `EMBEDDING_MODEL` (default `@cf/google/embeddinggemma-300m`, 768 dimensions), retrieves `SEMANTIC_CHUNK_TOP_K` chunk vectors from `CHUNK_INDEX`, resolves each candidate to its line anchor in `note_chunks`, drops candidates whose note was deleted or edited since indexing, and groups the rest per note. Results carry `matches[]` with the matched line number and character offsets, so a client highlights the exact span. Two thresholds apply together: `SEMANTIC_MIN_COSINE` (default `0.3`) rejects queries nothing answers, and `SEMANTIC_RELATIVE_MIN_RATIO` (default `0.6`) trims the weak tail behind a better chunk. Both were calibrated on the `cloud/eval` corpus, where negative-only queries peaked at 0.231 while the weakest true positive scored 0.345. `npm run deploy` provisions the chunk index before applying migrations, and refuses to continue if an existing index has a different dimension than the configured model.
 
-The Queue consumer must be idempotent because queue delivery is at least once. A stale embedding job verifies the note version/content hash before it writes a vector. Before D1 switches away from an old vector, the consumer emits a separate delete job; that job refuses to remove a vector still referenced by a live note. Queue enqueue failure is caught after the D1 transaction, leaves the note in a retryable state, and never turns a committed note mutation into a misleading HTTP 500. Cron retries pending, failed, stale-processing, model-drifted, and content-hash-drifted notes. Deleted notes are restorable for `TRASH_RETENTION_DAYS` (30 by default); after vector cleanup and expiry, Cron permanently deletes their D1 rows and attached R2 objects.
+The Queue consumer must be idempotent because queue delivery is at least once. A stale indexing job verifies the note version/content hash before it writes vectors, and chunk IDs are derived from the note ID and content hash so a replay overwrites rather than duplicates. After D1 points at the new chunks, a separate delete job removes vectors from older content hashes; a deleted note has every chunk removed. A scheduled pass also deletes chunk vectors that no longer resolve to any note, because an orphan vector would otherwise consume candidate slots in every query. Queue enqueue failure is caught after the D1 transaction, leaves the note in a retryable state, and never turns a committed note mutation into a misleading HTTP 500. Cron retries pending, failed, stale-processing, model-drifted, content-hash-drifted, and chunk-less notes. Deleted notes are restorable for `TRASH_RETENTION_DAYS` (30 by default); after chunk cleanup and expiry, Cron permanently deletes their D1 rows and attached R2 objects.
 
 Images are private user data. Store image metadata in D1 and bytes in the `IMAGES` R2 bucket. Upload and delete operations require device authentication; display uses either an authenticated read or a 24-hour HMAC capability URL issued inside the authenticated note response. Never expose account-level R2 keys to either client. Validate MIME type and byte size server-side, return `X-Content-Type-Options: nosniff`, and reject SVG in the initial release.
 
@@ -400,7 +401,7 @@ Before exposing the button publicly:
 4. Ensure Wrangler declares Static Assets, D1, R2, Vectorize, Workers AI, Queue producer/consumer, and the scheduled trigger.
 5. Keep the deploy script's D1 migration command bound to `DB`, not a hard-coded database name or UUID.
 6. Confirm the template does not request a NotesFlash setup secret or another manually copied environment value.
-7. Run a clean deployment into a new Cloudflare account and verify Vectorize is created with 1024 dimensions and cosine distance.
+7. Run a clean deployment into a new Cloudflare account and verify the `notesflash-chunks` Vectorize index is created with 768 dimensions and cosine distance.
 
 Example button Markdown:
 
@@ -605,7 +606,7 @@ Run this checklist against a brand-new Cloudflare account or an isolated test ac
 10. Close the window, press the shortcut, and confirm the process was hidden rather than destroyed.
 11. Create a plain-text note; confirm the save response does not wait for embedding and still succeeds if Queue is temporarily unavailable.
 12. Search by an exact character substring and confirm the lexical result appears.
-13. Search with a semantically similar phrase; confirm every current non-deleted note excerpt is compared directly by the BGE reranker, then tune `RERANKER_MIN_SCORE` if `0.05` is too broad or too strict for the instance's corpus.
+13. Search with a semantically similar phrase in the other language; confirm the result highlights the specific matched line, that `GET /api/search/status` reports a Vectorize vector count equal to the current chunk row count, and tune `SEMANTIC_MIN_COSINE` / `SEMANTIC_RELATIVE_MIN_RATIO` only against a corpus of representative positive and negative queries.
 14. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
 15. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
 16. Install the PWA from Safari and repeat read/search/image tests in standalone mode.

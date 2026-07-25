@@ -15,9 +15,11 @@ not receive note text, images, device tokens, embeddings, or search queries.
 - A flat note collection: no folder, notebook, or hierarchy tables.
 - Literal character search using D1 FTS5 `trigram`, with a safe `instr()`
   fallback for short queries and for environments where trigram is unavailable.
-- Workers AI (`@cf/baai/bge-reranker-base`) for direct all-note semantic ranking.
-- Existing BGE-M3/Vectorize background indexing, which is not read by semantic queries.
-- Cloudflare Queue consumer for asynchronous document indexing. Saving a note
+- Workers AI multilingual embeddings (`@cf/google/embeddinggemma-300m`) plus a
+  Vectorize index of line-level chunks for semantic search. A result reports the
+  exact line and character range that matched, and a query in one language finds
+  content written in another because the embedding space is shared.
+- Cloudflare Queue consumer for asynchronous chunk indexing. Saving a note
   never waits for embedding generation.
 - R2 for private image objects. Images are served through the Worker using either
   device authentication or a short-lived HMAC capability URL.
@@ -32,23 +34,33 @@ not receive note text, images, device tokens, embeddings, or search queries.
 ```text
 macOS client ── HTTPS + device token ──► NotesFlash Worker ◄── same-origin PWA
     |-- Static Assets: PWA shell, manifest, service worker, icons
-    |-- D1: notes, trigram FTS, devices, sessions, image metadata
+    |-- D1: notes, trigram FTS, note_chunks line anchors, devices, sessions, images
     |-- R2: private image bytes
-    |-- Workers AI: every current note excerpt -> BGE reranker score
-    |-- Vectorize: background per-note index (not queried by semantic search)
-    `-- Queue: asynchronous note indexing and vector deletion
+    |-- Workers AI: query embedding, chunk embeddings, optional span refinement
+    |-- Vectorize: line-level chunk vectors, cosine top-K
+    `-- Queue: asynchronous chunk indexing and vector deletion
 ```
 
 The write path is deliberately decoupled:
 
 ```text
 POST/PATCH note -> D1 commit + FTS trigger -> return note immediately
-                                      `----> Queue -> Workers AI -> Vectorize
+                                      `----> Queue -> chunking -> Workers AI
+                                                   -> Vectorize + note_chunks
+```
+
+The read path keeps literal search first:
+
+```text
+query -> D1 FTS5 trigram ── hit ──► return literal matches
+              `── empty ──► embed query -> Vectorize top-K chunks
+                            -> resolve line anchors in D1 -> aggregate per note
+                            -> threshold -> results[].matches[] with offsets
 ```
 
 The client should call lexical search as the user types, then call semantic
 search only when the completed lexical request returns zero rows. If Workers AI
-reranking is unavailable, literal search and note CRUD continue to work.
+or Vectorize is unavailable, literal search and note CRUD continue to work.
 
 ## Deploy to Cloudflare
 
@@ -99,11 +111,23 @@ npm run db:migrate:remote
 npm run deploy:worker
 ```
 
-The default [Cloudflare BGE-M3 model](https://developers.cloudflare.com/workers-ai/models/bge-m3/)
-outputs 1024 dimensions. If the model changes, create
-a new Vectorize index with the model's dimension and update both
-`EMBEDDING_MODEL` and `EMBEDDING_DIMENSIONS`. Vectors from different embedding
-models must never be mixed in one semantic index.
+The default model is
+[EmbeddingGemma 300M](https://developers.cloudflare.com/workers-ai/models/embeddinggemma-300m/),
+which outputs 768 dimensions. `npm run deploy` first runs
+`scripts/ensure-vectorize.mjs`, which creates the `notesflash-chunks` index with
+that dimension and the cosine metric if it does not exist, and refuses to
+continue when an existing index has a different width. Changing
+`EMBEDDING_MODEL` therefore also means creating a matching index and re-indexing:
+vectors from different embedding models must never be mixed.
+
+Model selection was measured, not assumed. `cloud/eval` holds a 50-note corpus
+and 30 golden queries covering cross-language pairs, paraphrase, concept
+questions, identifiers, dates, single-relevant-line notes, and negatives. Against
+Workers AI's catalogue, EmbeddingGemma reached Recall@1 93% / Recall@3 100% with
+100% line accuracy, and left a usable score gap between the strongest
+negative-query chunk (0.231) and the weakest true positive (0.345). BGE-M3 and
+Qwen3-Embedding scored 67% and 89% at Recall@1 with essentially no such gap,
+which is what makes a stable threshold possible here.
 
 ## Local development
 
@@ -138,20 +162,44 @@ npm run check
 |---|---|---|
 | `DB` | D1 database | required |
 | `IMAGES` | private R2 bucket | required |
-| `VECTOR_INDEX` | background per-note vector index; not read by `/api/search/semantic` | required by the existing async index worker |
-| `AI` | Workers AI binding for direct BGE reranking and background embeddings | required |
+| `CHUNK_INDEX` | Vectorize index of line-level chunk vectors, queried by `/api/search/semantic` | required |
+| `VECTOR_INDEX` | legacy note-level index; only used to clean up vectors written before chunk indexing | required until legacy cleanup completes |
+| `AI` | Workers AI binding for chunk and query embeddings | required |
 | `INDEX_QUEUE` | Queue producer/consumer | required for async indexing |
 | `ASSETS` | same-origin PWA static assets | `./public` |
 | `INSTANCE_NAME` | display name | `NotesFlash Cloud` |
 | `ALLOWED_ORIGINS` | comma-separated origins or `*` | `*` |
-| `EMBEDDING_MODEL` | background indexing model; not used by semantic queries | `@cf/baai/bge-m3` |
-| `EMBEDDING_DIMENSIONS` | background Vectorize dimension validation | `1024` |
-| `RERANKER_MIN_SCORE` | minimum `@cf/baai/bge-reranker-base` score returned | `0.05` |
-| `RERANKER_BODY_EXCERPT_CHARS` | maximum body characters compared per note (hard maximum 4000) | `1200` |
-| `SEMANTIC_TOP_K` | semantic result count/cost ceiling (hard maximum 8) | `8` |
+| `EMBEDDING_MODEL` | embedding model for chunks and queries | `@cf/google/embeddinggemma-300m` |
+| `EMBEDDING_INSTRUCTION` | retrieval instruction, for instruction-aware models only | unset |
+| `SEMANTIC_MIN_COSINE` | absolute cosine floor; rejects "nothing matches" queries | `0.3` |
+| `SEMANTIC_RELATIVE_MIN_RATIO` | keep chunks scoring at least this share of the best chunk | `0.6` |
+| `SEMANTIC_MULTI_CHUNK_BONUS` | ordering bonus per extra matching chunk in a note | `0.01` |
+| `SEMANTIC_MAX_BONUS_CHUNKS` | cap on bonus-eligible chunks | `3` |
+| `SEMANTIC_MAX_MATCHES_PER_NOTE` | matched lines returned per note | `3` |
+| `SEMANTIC_CHUNK_TOP_K` | chunk candidates pulled from Vectorize (hard maximum 100) | `40` |
+| `SEMANTIC_CHUNK_TARGET_CHARS` | preferred characters per chunk window | `220` |
+| `SEMANTIC_CHUNK_MAX_CHARS` | hard ceiling per chunk; longer lines split | `400` |
+| `SEMANTIC_CHUNK_MIN_CHARS` | windows shorter than this merge into the previous one | `24` |
+| `SEMANTIC_CHUNK_MAX_LINES` | maximum logical lines per chunk | `3` |
+| `SEMANTIC_CHUNK_OVERLAP_LINES` | lines re-used by the next window | `1` |
+| `SEMANTIC_CHUNK_TITLE_CONTEXT` | prefix the note title into embedded chunk text | `true` |
+| `SEMANTIC_SPAN_REFINE` | narrow the highlighted range to the matching sentence with one extra embedding call | `true` |
+| `SEMANTIC_SPAN_MIN_CHARS` | shortest chunk considered for refinement | `40` |
+| `SEMANTIC_SPAN_MAX_CANDIDATES` | candidate spans scored per request | `12` |
+| `SEMANTIC_SPAN_MAX_NOTES` | notes whose best match is refined | `1` |
+| `SEMANTIC_SPAN_MIN_RATIO` | refined span must keep this share of the chunk score | `1` |
+| `SEMANTIC_TOP_K` | semantic result count/cost ceiling (hard maximum 20) | `8` |
+| `LAB_ENABLED` | expose the operator search lab; must be exactly `true` | `false` |
+| `LAB_TOKEN_SHA256` | SHA-256 hex of the lab token; the plaintext is never stored here | empty |
 | `MAX_IMAGE_BYTES` | maximum multipart file size | `12582912` (12 MiB) |
 | `SESSION_TTL_DAYS` | device token lifetime | `180` |
 | `TRASH_RETENTION_DAYS` | soft-deleted note/image retention before purge | `30` |
+
+`SEMANTIC_CHUNK_TITLE_CONTEXT` is worth 8 percentage points of Recall@1 on the
+evaluation corpus, because a line like `--remote` only makes sense next to its
+note title. `SEMANTIC_SPAN_REFINE` costs one extra batched embedding call
+(250-490ms measured) and only runs when the matched window spans several lines or
+a long line; set it to `false` to trade highlight precision for latency.
 
 The bundled PWA is same-origin and does not need a cross-origin allowlist. Keep
 `ALLOWED_ORIGINS=*` only if separately hosted web clients must also connect;
@@ -412,35 +460,56 @@ Content-Type: application/json
 Semantic search is a fallback by default: if a literal title/body match exists,
 the endpoint returns no semantic results and does not invoke Workers AI. Send
 `fallbackOnly: false` only for diagnostics or a client that explicitly wants a
-hybrid result set. When literal search is empty, the Worker reads every current
-non-deleted note from D1 and sends its complete title plus a bounded body prefix
-directly to `@cf/baai/bge-reranker-base`. The semantic endpoint does not call
-BGE-M3, Vectorize, or any vector candidate API. Only the reranker score controls
-filtering, final ordering, and the returned `results[].score`.
+hybrid result set.
 
-The response reports `rankingStrategy`, `comparisonScope`, `rerankerModel`,
-`rerankerMinimumScore`, `bodyExcerptCharacters`, `comparedNoteCount`,
-`scoredNoteCount`, `matchedNoteCount`, and `topRerankerScore`. `Server-Timing`
-separates the D1 note scan, reranker, final hydration, and total latency. The
-configured `SEMANTIC_TOP_K` and the server hard limit both prevent legacy
-clients from requesting more than eight displayed results.
+When literal search is empty, the Worker embeds the query once, asks Vectorize
+for the top `SEMANTIC_CHUNK_TOP_K` chunk vectors, resolves each candidate to its
+line anchor in `note_chunks`, drops anything whose note was deleted or edited
+since indexing, and groups the survivors per note. A note's score is its best
+chunk score; additional matching chunks only add a small ordering bonus. Notes
+whose chunks are still queued for indexing are scored in-request, bounded to a
+handful of the most recently updated ones, so a note stays searchable seconds
+after it is saved.
 
-Both endpoints return `results`. Each result includes the complete note plus:
+Two thresholds apply together. `SEMANTIC_MIN_COSINE` rejects queries that nothing
+in the corpus answers, and `SEMANTIC_RELATIVE_MIN_RATIO` trims the weak tail once
+a clearly better chunk exists. A single absolute number cannot do both, which is
+why the previous reranker threshold had to be lowered until noise passed with it.
+
+The response reports `rankingStrategy`, `embeddingModel`, `embeddingDimensions`,
+`chunking`, `minCosine`, `relativeMinRatio`, `effectiveFloor`, `chunkTopK`,
+`candidateChunkCount`, `resolvedChunkCount`, `matchedChunkCount`,
+`matchedNoteCount`, `topChunkScore`, `pendingIndexCount`, and `spanRefinement`.
+`Server-Timing` separates query embedding, the Vectorize query, anchor
+resolution, the freshness pass, span refinement, hydration, and total latency.
+
+Every semantic result includes the complete note plus the lines that matched:
 
 ```json
 {
-  "matchType": "lexical",
-  "score": 1
+  "matchType": "semantic",
+  "score": 0.601,
+  "matches": [
+    {
+      "kind": "body",
+      "lineNumber": 2,
+      "rawLineIndex": 1,
+      "lineStart": 2,
+      "lineEnd": 2,
+      "charStart": 53,
+      "charEnd": 102,
+      "score": 0.601,
+      "text": "Signed image URLs expire after twenty four hours."
+    }
+  ]
 }
 ```
 
-The frontend should show literal results immediately and call semantic search
-only after a successful literal search returns zero rows. Reranker results below
-`RERANKER_MIN_SCORE` are omitted. The default `0.05` is calibrated to retain
-short-English-query to Chinese-note matches such as `migrate` to `迁移`, while
-still dropping very low-score noise. Recalibrate it against the instance's real
-multilingual positive/negative note corpus; do not tune it using Vectorize
-cosine scores.
+`charStart`/`charEnd` are offsets into `note.body`, so a client can highlight the
+exact span it renders; `lineNumber` is the 1-based logical line to scroll to and
+`rawLineIndex` indexes `body.split("\n")` directly. A `kind` of `title` means the
+note title matched and carries no line number. Lexical results omit `matches`
+because the client already knows where the literal query appears.
 
 Index health is available at:
 
@@ -448,45 +517,65 @@ Index health is available at:
 GET /api/search/status
 ```
 
-This reports the direct-reranker strategy, comparison scope, reranker model,
-threshold, body excerpt length, Top K, and the number of current non-deleted
-notes that a semantic query will compare. It does not inspect Vectorize because
-Vectorize is not part of the semantic query path.
+This reports the chunk-recall strategy, embedding model and dimension, chunking
+parameters, thresholds, Top-K values, note counts by index state, the number of
+current chunk rows, and the Vectorize vector count. A vector count below the
+chunk-row count means coverage is incomplete; the scheduled job requeues the
+affected notes.
 
-For production-safe calibration of the `migrate` to `迁移` cross-language case,
-an authenticated device may call:
+### Operator search lab
 
-```http
-POST /api/internal/reranker-migrate-diagnostic
-Authorization: Bearer <device-token>
-```
+`POST /api/internal/search-lab` is an operator-only surface for calibrating
+search against the instance's real corpus. It is disabled unless `LAB_ENABLED` is
+exactly `true` and `LAB_TOKEN_SHA256` holds the SHA-256 hex of a high-entropy
+token; only the hash is ever stored in configuration. Requests authenticate with
+`x-lab-token: <plaintext>` or a paired device Bearer token. Anything else gets
+the same `404 ROUTE_NOT_FOUND` as an unknown path, so the endpoint does not
+advertise itself, and requests are rate limited.
 
-The response contains only anonymous reranker score arrays and aggregate note
-counts. It never returns note IDs, titles, bodies, image URLs, or image metadata.
-Use it to distinguish AI errors, Top-K exclusion, and threshold filtering without
-exposing note content; treat it as an operator diagnostic rather than a client
-search endpoint.
+| Action | Purpose |
+|---|---|
+| `sweep` | Score several model/chunking/threshold strategies in-request, without touching the Vectorize index. Results include full score distributions for offline threshold sweeps. |
+| `live` | Run the deployed retrieval path (Vectorize recall plus aggregation). |
+| `api` | Call the real `/api/search/semantic` handler and verify the response contract, including that `charStart`/`charEnd` address the returned text. |
+| `probe` | Check which embedding models answer and how they score a known cross-language pair. |
+| `corpus-stats` | Note counts, chunk statistics, index coverage, and stale rows. |
+| `seed` / `cleanup` | Insert or hard-delete the `[EVAL:*]` evaluation corpus. Both refuse to touch any note whose title lacks that prefix. |
+| `prune-vectors` | Delete chunk vectors that no longer belong to any note. |
+| `reindex` | Mark every live note pending and enqueue indexing. |
+
+Note text is returned only when a request explicitly sets `includeText: true`;
+by default responses carry scores, line numbers, character offsets, and aggregate
+counts. `cloud/eval/run-eval.mjs` drives the endpoint and prints Recall@1/3/8,
+MRR, line accuracy, negative-query discipline, score separation, and latency
+percentiles.
+
+Disable the lab (`LAB_ENABLED=false`) before any public release. It can read the
+instance's notes and write `[EVAL:*]` notes; it exists for calibration, not for
+day-to-day use.
 
 ## Queue consistency model
 
-Queue delivery is at least once, so every vector job is idempotent:
+Queue delivery is at least once, so every indexing job is idempotent:
 
 - A job carries `noteId`, `version`, and `contentHash`.
 - The consumer ignores a job that no longer matches D1.
-- A vector ID contains the note version and hash prefix.
-- D1 is updated to point at the vector only with a conditional version/hash
-  update.
-- If that condition loses a race, the just-created stale vector is deleted.
-- Before D1 stops referencing an older vector, the consumer emits a separate
-  idempotent delete job; deletion refuses to remove any vector still referenced
-  by a live note.
-- These invariants maintain the existing background vector index; the direct
-  semantic endpoint does not read that index.
+- A chunk ID is `<noteId>:<contentHash prefix>:<chunkIndex>`, so re-running a job
+  overwrites the same vectors instead of accumulating duplicates.
+- Chunk rows for a note are replaced in one batch, and the note is marked ready
+  only with a conditional version/hash update.
+- If that condition loses a race, the newer job owns the index and the older job
+  stops without touching cleanup.
+- After D1 points at the new chunks, a separate idempotent job removes vectors
+  belonging to older content hashes; a deleted note has all of its chunks removed.
+- A scheduled pass deletes chunk vectors that no longer resolve to a note, since
+  a lost chunk row would otherwise leave a vector consuming candidate slots.
 
-A cron trigger runs every 15 minutes to retry pending/failed indexing, reindex
-notes whose model/content hash drifted, retry deleted-vector cleanup, and remove
-expired pairing codes, sessions, rate-limit windows, orphan uploads, and
-idempotency records. Once vector cleanup has completed, notes and attached R2
+A cron trigger runs every 5 minutes to retry pending/failed indexing, reindex
+notes whose model/content hash drifted or lost their chunk rows, retry chunk and
+legacy-vector cleanup, delete chunk vectors that no longer resolve to a note, and
+remove expired pairing codes, sessions, rate-limit windows, orphan uploads, and
+idempotency records. Once chunk cleanup has completed, notes and attached R2
 images older than `TRASH_RETENTION_DAYS` are permanently purged. A Queue outage
 never rolls back or misreports a committed D1 note mutation.
 
@@ -518,13 +607,14 @@ never rolls back or misreports a committed D1 note mutation.
 
 - This backend is designed for one owner and their devices; it is not a
   multi-tenant sharing service.
-- One embedding vector is generated per note. Very long documents are truncated
-  to at most 60,000 characters with model-side truncation enabled; complete
-  bodies remain available to literal search. This background vector is not used
-  by the direct semantic endpoint.
-- Direct semantic search compares every current non-deleted note, so its cost
-  grows linearly with note count. Each comparison uses the full title and at
-  most `RERANKER_BODY_EXCERPT_CHARS` body characters.
+- Indexing produces one vector per chunk: a title chunk plus overlapping windows
+  of up to `SEMANTIC_CHUNK_MAX_LINES` body lines. Very long lines are split on
+  sentence boundaries, so a 12,000-character note still resolves to individual
+  lines. Complete bodies remain available to literal search.
+- Semantic query cost does not grow with note count: it is one query embedding,
+  one Vectorize lookup of `SEMANTIC_CHUNK_TOP_K` candidates, one D1 resolution,
+  and optionally one span-refinement call. Index size, not query cost, grows with
+  the corpus.
 - Image dimensions are not decoded server-side in the MVP; width/height are null.
 - There is no local offline draft guarantee. The client must visibly distinguish
   `saving`, `saved`, and save-error states; it flushes before normal navigation,

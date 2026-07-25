@@ -9,12 +9,12 @@ NotesFlash 是一个轻量、搜索优先的云端纯文本笔记 MVP：桌面�
 - 手机端可安装 PWA，不需要 App Store 应用。
 - 笔记以完整正文流从上到下平铺，不折叠、不截断。
 - 搜索第一项始终是快速创建；搜索文字自动成为新笔记标题。
-- 关键词阶段使用字符匹配；随后通过 Workers AI + Vectorize 余弦相似度补充语义结果。
+- 关键词阶段使用字符匹配；精确搜索为空时，用 Workers AI 多语言 embedding 在 Vectorize 里做行级检索，结果会指出命中的具体行与字符区间，中英文可以互相召回。
 - `↑` / `↓` 选择结果，`Enter` 打开，`Tab` 复制命中行并进入行内编辑。
 - 纯文本标题和正文，不解析 Markdown。
 - 支持 JPEG、PNG、WebP、GIF、AVIF 图片上传、R2 私有保存和流内展示。
 - Cloudflare D1 保存正文，FTS5 trigram 负责中文字符检索。
-- Cloudflare Queue 异步生成 Embedding，笔记保存不等待 AI。
+- Cloudflare Queue 异步按行切块生成 Embedding，笔记保存不等待 AI。
 - 用户通过 Deploy to Cloudflare 把 PWA、Worker API 和数据资源一次部署到自己的账号；项目不需要 NotesFlash OAuth 或数据服务。
 
 ## 目录
@@ -66,7 +66,7 @@ npm run dev
 https://deploy.workers.cloudflare.com/?url=https://github.com/realllllty/notesflash/tree/main/cloud
 ```
 
-Cloudflare 当前支持把完全隔离的 GitHub 子目录作为 Deploy Button 模板；`cloud/` 已包含自己的依赖、Worker 源码、migration 和预构建 PWA，因此可以独立导入。Cloudflare 会读取 `wrangler.jsonc`，自动配置 Worker Static Assets、D1、R2、Workers AI、Vectorize 和 Queue。`cloud/package.json` 的 `deploy` 脚本会先按 binding 名运行远程 D1 migration。
+Cloudflare 当前支持把完全隔离的 GitHub 子目录作为 Deploy Button 模板；`cloud/` 已包含自己的依赖、Worker 源码、migration 和预构建 PWA，因此可以独立导入。Cloudflare 会读取 `wrangler.jsonc`，自动配置 Worker Static Assets、D1、R2、Workers AI、Vectorize 和 Queue。`cloud/package.json` 的 `deploy` 脚本会先幂等创建行级向量索引 `notesflash-chunks`（768 维 cosine），再按 binding 名运行远程 D1 migration。
 
 部署过程不要求用户填写 NotesFlash 的环境变量或初始化 Secret。部署完成后，同一个地址就是手机端 PWA：
 
@@ -117,7 +117,7 @@ macOS 签名、公证、Universal Binary 和 DMG 详见 [docs/DEPLOYMENT.md](doc
 D1          当前笔记、设备、Session、配对码、FTS5 索引
 R2          私有图片字节
 Workers AI  文档和查询 Embedding
-Vectorize   语义向量与余弦相似度 Top-K
+Vectorize   行级 chunk 向量与余弦相似度 Top-K
 Queue       异步索引和向量删除
 ```
 
