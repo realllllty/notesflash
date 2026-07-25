@@ -733,8 +733,8 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
     chunkIds.push(...chunkRows.map((row) => row.chunk_id));
   }
   let deletedChunkVectors = 0;
-  for (let offset = 0; offset < chunkIds.length; offset += 200) {
-    const batch = chunkIds.slice(offset, offset + 200);
+  for (let offset = 0; offset < chunkIds.length; offset += 100) {
+    const batch = chunkIds.slice(offset, offset + 100);
     try {
       await context.env.CHUNK_INDEX.deleteByIds(batch);
       deletedChunkVectors += batch.length;

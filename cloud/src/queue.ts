@@ -15,6 +15,8 @@ import type {
 
 /** Vectorize accepts at most 1000 vectors per upsert from a Worker. */
 const VECTOR_UPSERT_BATCH = 200;
+/** Vectorize rejects a delete payload with more than 100 IDs (code 40007). */
+const VECTOR_DELETE_BATCH = 100;
 const D1_STATEMENT_BATCH = 40;
 
 function embeddingErrorCode(error: unknown): string {
@@ -187,8 +189,8 @@ async function processDeleteChunksJob(env: Env, job: DeleteChunksJob): Promise<v
     .filter((id) => liveHash === null || !id.startsWith(`${job.noteId}:${liveHash.slice(0, 6)}:`));
   if (staleIds.length === 0) return;
 
-  for (let offset = 0; offset < staleIds.length; offset += VECTOR_UPSERT_BATCH) {
-    await env.CHUNK_INDEX.deleteByIds(staleIds.slice(offset, offset + VECTOR_UPSERT_BATCH));
+  for (let offset = 0; offset < staleIds.length; offset += VECTOR_DELETE_BATCH) {
+    await env.CHUNK_INDEX.deleteByIds(staleIds.slice(offset, offset + VECTOR_DELETE_BATCH));
   }
 
   const deletions = staleIds.map((id) =>

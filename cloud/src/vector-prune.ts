@@ -12,7 +12,8 @@ import type { EmbeddingModelSpec } from "./embedding-models";
 import type { Env } from "./types";
 
 const D1_PARAMETER_BATCH = 80;
-const DELETE_BATCH = 200;
+/** Vectorize rejects a delete payload with more than 100 IDs (code 40007). */
+const DELETE_BATCH = 100;
 
 export interface PruneOptions {
   /** Probe queries per pass; each probe returns up to `topK` IDs. */

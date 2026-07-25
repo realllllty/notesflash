@@ -110,6 +110,22 @@ describe("pruneOrphanChunkVectors", () => {
     expect(test.deleted.flat()).toHaveLength(5);
   });
 
+
+  it("never sends more than 100 ids in one delete payload", async () => {
+    // Vectorize rejects larger payloads with VECTOR_DELETE_ERROR 40007.
+    const indexIds = Array.from({ length: 250 }, (_, index) => `note-gone:eeeeee:${index}`);
+    const test = harness({ indexIds, knownIds: [] });
+
+    await pruneOrphanChunkVectors(test.env, spec, {
+      ...DEFAULT_PRUNE,
+      probes: 1,
+      maxDeletions: 250,
+    });
+
+    expect(test.deleted.length).toBeGreaterThan(1);
+    for (const batch of test.deleted) expect(batch.length).toBeLessThanOrEqual(100);
+  });
+
   it("survives probe and delete failures", async () => {
     const failingProbe = harness({ indexIds: ["x"], knownIds: [], queryError: new Error("down") });
     expect((await pruneOrphanChunkVectors(failingProbe.env, spec)).deleted).toBe(0);
