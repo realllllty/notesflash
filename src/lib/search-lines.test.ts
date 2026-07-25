@@ -7,7 +7,7 @@ import {
   retainActiveMatchKey,
   type SearchLineTarget
 } from './search-lines';
-import type { ImageAsset, Note, SearchHit } from './types';
+import type { ImageAsset, Note, SearchHit, SearchMatch } from './types';
 
 describe('search line targets', () => {
   it('keeps every matching logical line in a note, in title then body order', () => {
@@ -74,6 +74,65 @@ describe('search line targets', () => {
       ['first', 0, 'first:body:1'],
       ['second', 1, 'second:title'],
       ['second', 1, 'second:body:0']
+    ]);
+  });
+
+  it('uses the server reported lines for a semantic hit', () => {
+    const note = makeNote('semantic', '季度复盘', '第一行\n服务稳定性收益\n第三行');
+    const hit: SearchHit = {
+      ...makeHit(note, 'semantic', '服务稳定性收益'),
+      matches: [
+        bodyMatch(1, '服务稳定性收益', note.body),
+        { ...bodyMatch(1, '服务稳定性收益', note.body), kind: 'title', rawLineIndex: null, lineNumber: null }
+      ]
+    };
+
+    const targets = collectSearchLineTargets([hit], '完全不同的查询');
+
+    expect(targets.map(targetSummary)).toEqual([
+      ['semantic:body:1', 'body', 1, 2, '服务稳定性收益'],
+      ['semantic:title', 'title', null, null, '季度复盘']
+    ]);
+    expect(targets.every((target) => target.semantic && !target.semanticOnly)).toBe(true);
+  });
+
+  it('skips server matches that no longer exist in the note body', () => {
+    const note = makeNote('semantic', '标题', '只有一行');
+    const hit: SearchHit = {
+      ...makeHit(note, 'semantic'),
+      matches: [
+        { ...bodyMatch(1, '不存在', note.body), rawLineIndex: 9, lineNumber: 10 },
+        { ...bodyMatch(0, '只有一行', note.body), rawLineIndex: null }
+      ]
+    };
+
+    // Nothing usable is left, so the stable note-level fallback is used.
+    const targets = collectSearchLineTargets([hit], '不同的查询');
+    expect(targets.map((target) => target.key)).toEqual(['semantic:semantic']);
+  });
+
+  it('skips a server match that points at an image line', () => {
+    const image = makeImage('saved-image');
+    const note = makeNote('semantic', '标题', `文本行\n${imageMarker(image.id)}`, [image]);
+    const hit: SearchHit = {
+      ...makeHit(note, 'semantic'),
+      matches: [{ ...bodyMatch(1, imageMarker(image.id), note.body) }]
+    };
+
+    expect(collectSearchLineTargets([hit], '不同的查询').map((target) => target.key)).toEqual([
+      'semantic:semantic'
+    ]);
+  });
+
+  it('prefers literal lines over server matches when both exist', () => {
+    const note = makeNote('both', '标题', '关键词一\n其他行');
+    const hit: SearchHit = {
+      ...makeHit(note, 'both', '标题'),
+      matches: [bodyMatch(1, '其他行', note.body)]
+    };
+
+    expect(collectSearchLineTargets([hit], '关键词').map((target) => target.key)).toEqual([
+      'both:body:0'
     ]);
   });
 
@@ -171,6 +230,21 @@ function makeHit(
   snippet = ''
 ): SearchHit {
   return { note, matchType, snippet, score: 1 };
+}
+
+function bodyMatch(rawLineIndex: number, text: string, body: string): SearchMatch {
+  const charStart = body.indexOf(text);
+  return {
+    kind: 'body',
+    rawLineIndex,
+    lineNumber: rawLineIndex + 1,
+    lineStart: rawLineIndex + 1,
+    lineEnd: rawLineIndex + 1,
+    charStart,
+    charEnd: charStart + text.length,
+    score: 0.6,
+    text
+  };
 }
 
 function targets(...keys: string[]): SearchLineTarget[] {

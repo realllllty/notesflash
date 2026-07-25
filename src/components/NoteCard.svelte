@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Image as ImageIcon } from '@lucide/svelte';
   import { createEventDispatcher } from 'svelte';
+  import { hasTitleMatch, matchSpansByLine } from '../lib/match-spans';
   import { logicalNoteLines, parseNoteContent } from '../lib/note-content';
   import { formatRelativeTime } from '../lib/text';
   import type { NoteLayoutMode, SearchHit } from '../lib/types';
@@ -23,7 +24,13 @@
   $: contentBlocks = parseNoteContent(hit.note.body, hit.note.images);
   $: contentLines = logicalNoteLines(contentBlocks);
   $: semanticOnly = hit.matchType === 'semantic';
+  // A semantic hit has no literal query text to highlight, but the server
+  // reports which spans matched, so the card highlights those instead.
   $: highlightQuery = semanticOnly ? '' : query;
+  $: semanticSpans = matchSpansByLine(hit.note.body, hit.matches);
+  $: titleSpans = hasTitleMatch(hit.matches)
+    ? [{ start: 0, end: (hit.note.title || '无标题').length }]
+    : [];
 </script>
 
 <article
@@ -50,7 +57,11 @@
     >
       <h2 class="break-words text-[15px] font-semibold leading-6 tracking-[-0.01em]">
         <span class:semantic-title-ink={semanticOnly}>
-          <HighlightedText text={hit.note.title || '无标题'} query={highlightQuery} />
+          <HighlightedText
+            text={hit.note.title || '无标题'}
+            query={highlightQuery}
+            spans={titleSpans}
+          />
         </span>
       </h2>
       <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-base-content/38">
@@ -90,7 +101,11 @@
         >
           <span class="note-line-number" aria-hidden="true">{line.displayLineNumber}</span>
           <div class="note-line-content">
-            {#if line.text}<HighlightedText text={line.text} query={highlightQuery} />{/if}
+            {#if line.text}<HighlightedText
+                text={line.text}
+                query={highlightQuery}
+                spans={semanticSpans.get(line.rawLineIndex) ?? []}
+              />{/if}
           </div>
         </div>
       {:else}

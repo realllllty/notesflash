@@ -22,6 +22,8 @@ export interface SearchLineTarget {
   text: string;
   /** True when this is a location fallback rather than a literal line match. */
   semanticOnly: boolean;
+  /** True when the target came from a server-reported semantic match. */
+  semantic?: boolean;
 }
 
 interface CandidateLine {
@@ -57,10 +59,59 @@ export function collectSearchLineTargets(
 
     // A lexical hit without a literal line is stale or invalid and must not
     // turn into an arbitrary visible match. Only semantic-capable hits may
-    // use a location fallback.
+    // use the server's matched lines, or a location fallback.
     if (hit.matchType === 'lexical') return [];
 
+    const semanticTargets = semanticLineTargets(hit, hitIndex);
+    if (semanticTargets.length > 0) return semanticTargets;
+
     return [semanticFallback(hit, hitIndex)];
+  });
+}
+
+/**
+ * Navigation targets for the lines semantic search actually matched.
+ *
+ * The server reports the anchor line and character range per match, so ↑/↓ can
+ * visit real lines and Tab copies the matched line instead of the title.
+ */
+function semanticLineTargets(hit: SearchHit, hitIndex: number): SearchLineTarget[] {
+  const bodyLines = hit.note.body.split('\n');
+  const validImageIds = new Set(hit.note.images.map((image) => image.id));
+
+  return (hit.matches ?? []).flatMap<SearchLineTarget>((match): SearchLineTarget[] => {
+    if (match.kind === 'title') {
+      if (!hit.note.title) return [];
+      return [{
+        key: targetKey(hit.note.id, 'title', null),
+        noteId: hit.note.id,
+        hitIndex,
+        source: 'title',
+        rawLineIndex: null,
+        lineNumber: null,
+        text: hit.note.title,
+        semanticOnly: false,
+        semantic: true
+      }];
+    }
+
+    const rawLineIndex = match.rawLineIndex;
+    if (rawLineIndex === null || rawLineIndex < 0 || rawLineIndex >= bodyLines.length) return [];
+    const text = bodyLines[rawLineIndex];
+    const markerImageId = imageIdFromMarker(text);
+    if (markerImageId && validImageIds.has(markerImageId)) return [];
+
+    return [{
+      key: targetKey(hit.note.id, 'body', rawLineIndex),
+      noteId: hit.note.id,
+      hitIndex,
+      source: 'body',
+      rawLineIndex,
+      lineNumber: rawLineIndex + 1,
+      text,
+      semanticOnly: false,
+      semantic: true
+    }];
   });
 }
 

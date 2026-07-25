@@ -173,6 +173,20 @@ button,
   -webkit-box-decoration-break: clone;
 }
 
+/* Semantic matches have no literal query text, so they get their own ink:
+   the same rainbow used for the active semantic card, applied to the exact
+   span the server reported. */
+.note-card mark.semantic-mark {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, #ff6b8a 30%, transparent) 0%,
+    color-mix(in oklab, #ffd166 34%, transparent) 26%,
+    color-mix(in oklab, #55d6be 30%, transparent) 52%,
+    color-mix(in oklab, #6ea8ff 30%, transparent) 76%,
+    color-mix(in oklab, #b47cff 30%, transparent) 100%
+  );
+}
+
 .note-lines {
   --note-line-height: 24px;
   --note-gutter-width: 1.2rem;

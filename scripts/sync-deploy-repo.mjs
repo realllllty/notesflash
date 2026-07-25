@@ -40,7 +40,9 @@ if (!existsSync(resolve(deployDir, ".git"))) {
 }
 
 // Source files that are byte-identical between the template and the deployment.
-for (const entry of ["src", "migrations", "scripts", "tsconfig.json"]) {
+// `public` holds the prebuilt PWA, so a frontend change reaches the deployment
+// only after `npm run build:cloud-pwa` has refreshed it.
+for (const entry of ["src", "migrations", "scripts", "public", "tsconfig.json"]) {
   const target = resolve(deployDir, entry);
   rmSync(target, { recursive: true, force: true });
   cpSync(resolve(cloudDir, entry), target, { recursive: true });

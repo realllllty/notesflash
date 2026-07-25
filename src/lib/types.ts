@@ -27,6 +27,23 @@ export interface Note {
 
 export type MatchType = 'lexical' | 'semantic' | 'both';
 
+/**
+ * A matched line range reported by semantic search. Character offsets are
+ * indexes into `note.body`, so the client can highlight the exact span instead
+ * of guessing which part of the note matched.
+ */
+export interface SearchMatch {
+  kind: 'title' | 'body';
+  lineNumber: number | null;
+  rawLineIndex: number | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  charStart: number | null;
+  charEnd: number | null;
+  score: number;
+  text: string;
+}
+
 export interface SearchHit {
   note: Note;
   matchType: MatchType;
@@ -34,6 +51,8 @@ export interface SearchHit {
   score: number;
   lexicalRank?: number;
   semanticRank?: number;
+  /** Server-reported semantic line matches, strongest first. */
+  matches?: SearchMatch[];
 }
 
 export interface ConnectionProfile {

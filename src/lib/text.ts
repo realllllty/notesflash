@@ -100,6 +100,9 @@ export function mergeSearchHits(lexical: SearchHit[], semantic: SearchHit[]): Se
         ...existing,
         matchType: 'both',
         semanticRank: index + 1,
+        // Keep the server's matched lines from the semantic result; the lexical
+        // hit has no line information of its own.
+        matches: hit.matches ?? existing.matches,
         score: existing.score + reciprocalRank(index + 1, 0.72)
       });
       return;

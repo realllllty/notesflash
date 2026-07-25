@@ -1,4 +1,5 @@
 import { characterNgrams, cosineSimilarity, makeSnippet, normalizeText } from './text';
+import { bodyLineOffsets } from './match-spans';
 import {
   ManualProxyProbeError,
   markRuntimeResponseFailed,
@@ -16,6 +17,7 @@ import type {
   PairingCode,
   PairingResponse,
   SearchHit,
+  SearchMatch,
   SortMode,
   UpdateNoteInput
 } from './types';
@@ -192,17 +194,44 @@ export class RemoteNotesClient implements NotesClient {
     return records.map((record, index) => {
       const value = asRecord(record);
       const note = this.mapNote(value.note ?? value);
+      const matches = this.mapMatches(value.matches);
+      const bestBodyMatch = matches.find((match) => match.kind === 'body');
       return {
         note,
         matchType: value.matchType === 'both' ? 'both' : fallbackType,
         snippet: typeof value.snippet === 'string'
           ? value.snippet
           : fallbackType === 'semantic'
-            ? ''
+            ? bestBodyMatch?.text ?? ''
             : makeSnippet(note.title, note.body, ''),
         score: numberValue(value.score, 1 / (index + 1)),
-        semanticRank: fallbackType === 'semantic' ? index + 1 : undefined
+        semanticRank: fallbackType === 'semantic' ? index + 1 : undefined,
+        matches: matches.length > 0 ? matches : undefined
       };
+    });
+  }
+
+  /** Older Workers omit `matches`; the client then keeps its literal-only behaviour. */
+  private mapMatches(value: unknown): SearchMatch[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      const record = asRecord(item);
+      const kind = record.kind === 'title' ? 'title' : 'body';
+      const rawLineIndex = optionalNumber(record.rawLineIndex);
+      const lineNumber = optionalNumber(record.lineNumber);
+      const text = typeof record.text === 'string' ? record.text : '';
+      if (kind === 'body' && rawLineIndex === undefined) return [];
+      return [{
+        kind,
+        lineNumber: lineNumber ?? null,
+        rawLineIndex: rawLineIndex ?? null,
+        lineStart: optionalNumber(record.lineStart) ?? null,
+        lineEnd: optionalNumber(record.lineEnd) ?? null,
+        charStart: optionalNumber(record.charStart) ?? null,
+        charEnd: optionalNumber(record.charEnd) ?? null,
+        score: numberValue(record.score, 0),
+        text
+      }];
     });
   }
 
@@ -353,7 +382,10 @@ export class DemoNotesClient implements NotesClient {
           note: cloneNote(note),
           matchType: 'semantic' as const,
           snippet: makeSnippet(note.title, note.body, query),
-          score
+          score,
+          // Demo mode mirrors the Worker contract so the in-line highlighting
+          // and line navigation behave the same without a backend.
+          matches: demoLineMatches(note, queryVector)
         };
       })
       .filter((hit) => hit.score > 0.08)
@@ -510,6 +542,31 @@ function sortNotes(notes: Note[], sort: SortMode): Note[] {
     if (sort === 'created_desc') return right.createdAt - left.createdAt;
     return right.updatedAt - left.updatedAt;
   });
+}
+
+/**
+ * Line-level matches for demo mode, scored with the same character n-gram
+ * similarity the demo note ranking uses. Offsets are computed from the body so
+ * highlighting exercises the real code path.
+ */
+function demoLineMatches(note: Note, queryVector: Map<string, number>): SearchMatch[] {
+  const offsets = bodyLineOffsets(note.body);
+  return note.body
+    .split('\n')
+    .map((text, rawLineIndex) => ({
+      kind: 'body' as const,
+      rawLineIndex,
+      lineNumber: rawLineIndex + 1,
+      lineStart: rawLineIndex + 1,
+      lineEnd: rawLineIndex + 1,
+      charStart: offsets[rawLineIndex],
+      charEnd: offsets[rawLineIndex] + text.length,
+      score: cosineSimilarity(queryVector, characterNgrams(text)),
+      text
+    }))
+    .filter((match) => match.text.trim().length > 0 && match.score > 0.08)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3);
 }
 
 function cloneNote(note: Note): Note {
