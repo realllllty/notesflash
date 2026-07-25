@@ -42,6 +42,16 @@
       "body": "设备令牌是高熵随机值，数据库只保存它的哈希。\n会话默认有效期一百八十天。\n吊销设备会同时失效它的会话和未使用的配对码。"
     },
     {
+      "key": "short-settings-zh",
+      "title": "应用偏好",
+      "body": "设置面板从搜索框右侧打开。\n修改卡片宽度后会立即生效。"
+    },
+    {
+      "key": "short-exit-zh",
+      "title": "场地指引",
+      "body": "安全出口在西侧走廊尽头。\n访客请从南门登记进入。"
+    },
+    {
       "key": "phone-access",
       "title": "手机端使用方式",
       "body": "手机不需要安装应用商店里的程序。\n在 Safari 里选择添加到主屏幕，就能像独立应用一样打开。\n离线时只能看到已经加载过的内容。"
@@ -83,7 +93,7 @@
     },
     {
       "key": "pricing",
-      "title": "Model pricing",
+      "title": "Inference cost reference",
       "body": "Text embeddings cost $0.012 per million input tokens.\nTranslation costs $0.34 per million tokens.\nThe budget alert triggers at fifty dollars per month."
     },
     {

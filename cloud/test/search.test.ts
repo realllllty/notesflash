@@ -15,10 +15,18 @@ interface ContextOptions {
    */
   scores?: Record<string, number>;
   defaultScore?: number;
+  /** Scores returned by the contextual short-query view. */
+  expandedScores?: Record<string, number>;
+  expandedDefaultScore?: number;
   /** Chunk ids returned by Vectorize but stale in D1. */
   staleChunkIds?: string[];
+  /** Allow selected current chunks to appear while a note is still pending. */
+  indexedChunkNeedles?: string[];
   vectorError?: Error;
+  expandedVectorError?: Error;
   embeddingError?: Error;
+  /** Fail document embeddings while allowing the query embedding to succeed. */
+  inlineEmbeddingError?: Error;
   env?: Record<string, string>;
   limit?: number;
   fallbackOnly?: boolean;
@@ -90,38 +98,71 @@ function context(options: ContextOptions) {
   });
   const chunkRows = chunkRowsFor(allNotes, chunking);
   const defaultScore = options.defaultScore ?? 0.1;
-  const scoreForText = (text: string) => {
-    for (const [needle, score] of Object.entries(options.scores ?? {})) {
+  const scoreForText = (
+    text: string,
+    scores = options.scores ?? {},
+    fallback = defaultScore,
+  ) => {
+    for (const [needle, score] of Object.entries(scores)) {
       if (text.includes(needle)) return score;
     }
-    return defaultScore;
+    return fallback;
   };
 
   const embed = vi.fn(async (_model: string, input: Record<string, unknown>) => {
-    if (options.embeddingError) throw options.embeddingError;
     const texts = (input.text ?? input.queries ?? input.documents) as string[];
     const isQuery = input.queries !== undefined ||
       (typeof texts[0] === "string" && texts[0].startsWith("task: search result | query: "));
+    if (options.embeddingError) throw options.embeddingError;
+    if (!isQuery && options.inlineEmbeddingError) throw options.inlineEmbeddingError;
     // A two-dimension stub: the query is the unit vector [1, 0, ...] and each
     // document vector encodes its intended cosine similarity directly.
     return {
       data: texts.map((text) => {
-        const value = isQuery ? 1 : scoreForText(text);
         const vector = new Array(768).fill(0);
-        vector[0] = value;
-        vector[1] = isQuery ? 0 : Math.sqrt(Math.max(0, 1 - value * value));
+        if (isQuery) {
+          const expanded = text.startsWith(
+            "task: search result | query: notes related to ",
+          );
+          vector[expanded ? 1 : 0] = 1;
+          return vector;
+        }
+        const rawScore = scoreForText(text);
+        const expandedScore = scoreForText(
+          text,
+          options.expandedScores,
+          options.expandedDefaultScore ?? defaultScore,
+        );
+        vector[0] = rawScore;
+        vector[1] = expandedScore;
+        vector[2] = Math.sqrt(Math.max(0, 1 - rawScore * rawScore - expandedScore * expandedScore));
         return vector;
       }),
     };
   });
 
-  const vectorQuery = vi.fn(async () => {
+  const vectorQuery = vi.fn(async (queryVector: number[], queryOptions?: { topK?: number }) => {
     if (options.vectorError) throw options.vectorError;
+    const expanded = queryVector[1] === 1;
+    if (expanded && options.expandedVectorError) throw options.expandedVectorError;
     return {
       matches: chunkRows
-        .filter((row) => row.note.embedding_status === "ready")
-        .map((row) => ({ id: row.chunk_id, score: scoreForText(row.chunk.text) }))
-        .sort((left, right) => right.score - left.score),
+        .filter((row) =>
+          row.note.embedding_status === "ready" ||
+          options.indexedChunkNeedles?.some((needle) => row.chunk.text.includes(needle))
+        )
+        .map((row) => ({
+          id: row.chunk_id,
+          score: expanded
+            ? scoreForText(
+              row.chunk.text,
+              options.expandedScores,
+              options.expandedDefaultScore ?? defaultScore,
+            )
+            : scoreForText(row.chunk.text),
+        }))
+        .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+        .slice(0, queryOptions?.topK ?? Number.POSITIVE_INFINITY),
     };
   });
 
@@ -138,8 +179,12 @@ function context(options: ContextOptions) {
         async first() {
           if (sql.includes("FROM notes_fts")) return options.literal ? { found: 1 } : null;
           if (sql.includes("instr(lower(title)")) return options.literal ? { found: 1 } : null;
-          if (sql.includes("embedding_status != 'ready'")) {
-            return { count: liveNotes.filter((row) => row.embedding_status !== "ready").length };
+          if (sql.includes("embedding_status IN ('pending', 'processing')")) {
+            return {
+              count: liveNotes.filter((row) =>
+                row.embedding_status === "pending" || row.embedding_status === "processing"
+              ).length,
+            };
           }
           if (sql.includes("FROM note_chunks c")) {
             return {
@@ -167,8 +212,10 @@ function context(options: ContextOptions) {
               ),
             };
           }
-          if (sql.includes("embedding_status != 'ready'")) {
-            const pendingRows = liveNotes.filter((row) => row.embedding_status !== "ready");
+          if (sql.includes("embedding_status IN ('pending', 'processing')")) {
+            const pendingRows = liveNotes.filter((row) =>
+              row.embedding_status === "pending" || row.embedding_status === "processing"
+            );
             return {
               results: pendingRows.map((row) => ({
                 id: row.id,
@@ -230,11 +277,12 @@ const crossLanguageNote = note(
 const unrelatedNote = note("note-lunch", "午餐记录", "今天吃了牛肉面，汤头偏咸。");
 
 describe("chunk-level semantic search", () => {
-  it("skips Workers AI and Vectorize when a literal match exists", async () => {
+  it("ignores fallbackOnly=false and skips Workers AI and Vectorize on a literal match", async () => {
     const { requestContext, embed, vectorQuery } = context({
       literal: true,
       query: "literal-short-circuit-query",
       notes: [crossLanguageNote],
+      fallbackOnly: false,
     });
 
     const payload = await (await semanticSearch(requestContext)).json() as Record<string, unknown>;
@@ -286,6 +334,147 @@ describe("chunk-level semantic search", () => {
     expect(match.rawLineIndex).toBe(2);
     expect(crossLanguageNote.body.slice(match.charStart, match.charEnd)).toBe(match.text);
     expect(match.text).toContain("We migrate the legacy notes");
+  });
+
+  it("rescues entry to the Chinese entrance line with one batched embedding call", async () => {
+    const strong = note("note-strong", "Other semantic result", "A stronger raw-only match.");
+    const entrance = note(
+      "note-entrance",
+      "恢复说明",
+      "回收站保留三十天。\n目前恢复入口只有接口，没有界面。\n接口恢复说明位于文档末尾。",
+    );
+    const { requestContext, embed, vectorQuery } = context({
+      query: "entry",
+      notes: [strong, entrance],
+      scores: {
+        "stronger raw-only": 0.333,
+        "目前恢复入口": 0.252,
+        "接口恢复说明": 0.257,
+      },
+      expandedScores: {
+        "stronger raw-only": 0.2,
+        "目前恢复入口": 0.322,
+        "接口恢复说明": 0.249,
+      },
+      env: {
+        SEMANTIC_CHUNK_MAX_LINES: "1",
+        SEMANTIC_CHUNK_OVERLAP_LINES: "0",
+      },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      shortQueryRescue: {
+        eligible: boolean;
+        applied: boolean;
+        consensusChunkCount: number;
+        addedNoteCount: number;
+      };
+      results: Array<{
+        id: string;
+        score: number;
+        matches: Array<{ text: string; lineNumber: number; score: number }>;
+      }>;
+    };
+
+    expect(payload.results.map((result) => result.id)).toEqual(["note-strong", "note-entrance"]);
+    expect(payload.results[1].score).toBeCloseTo(0.252, 6);
+    expect(payload.results[1].matches[0]).toMatchObject({ lineNumber: 2, score: 0.252 });
+    expect(payload.results[1].matches[0].text).toContain("入口");
+    expect(payload.shortQueryRescue).toMatchObject({
+      eligible: true,
+      applied: true,
+      consensusChunkCount: 1,
+      addedNoteCount: 1,
+    });
+    expect(vectorQuery).toHaveBeenCalledTimes(2);
+
+    const queryInputs = embed.mock.calls
+      .map((call) => call[1] as Record<string, unknown>)
+      .map((input) => input.text)
+      .filter((texts): texts is string[] =>
+        Array.isArray(texts) && texts.some((text) => text.includes("query: entry"))
+      );
+    expect(queryInputs).toEqual([[
+      "task: search result | query: entry",
+      "task: search result | query: notes related to entry",
+    ]]);
+  });
+
+  it("does not let an expanded-only match through the consensus gate", async () => {
+    const entrance = note("note-expanded-only", "恢复说明", "目前恢复入口只有接口，没有界面。");
+    const { requestContext } = context({
+      query: "entry-expanded-only",
+      notes: [entrance],
+      scores: { "目前恢复入口": 0.22 },
+      expandedScores: { "目前恢复入口": 0.9 },
+      // Keep this synthetic query eligible despite its descriptive fixture name.
+      env: { SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS: "40" },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      shortQueryRescue: { consensusChunkCount: number };
+      results: unknown[];
+    };
+    expect(payload.results).toEqual([]);
+    expect(payload.shortQueryRescue.consensusChunkCount).toBe(0);
+  });
+
+  it("keeps primary results when the optional expanded Vectorize lookup fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { requestContext, vectorQuery } = context({
+        query: "entry-vector-degrade",
+        notes: [crossLanguageNote],
+        scores: { "We migrate the legacy notes": 0.62 },
+        expandedVectorError: new Error("expanded lookup unavailable"),
+        env: { SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS: "40" },
+      });
+
+      const payload = await (await semanticSearch(requestContext)).json() as {
+        shortQueryRescue: {
+          attempted: boolean;
+          applied: boolean;
+          expandedIndexAvailable: boolean;
+          expandedVectorizeFailed: boolean;
+          addedNoteCount: number;
+        };
+        results: Array<{ id: string }>;
+      };
+      expect(payload.results.map((result) => result.id)).toEqual(["note-en"]);
+      expect(payload.shortQueryRescue).toMatchObject({
+        attempted: true,
+        applied: false,
+        expandedIndexAvailable: false,
+        expandedVectorizeFailed: true,
+        addedNoteCount: 0,
+      });
+      expect(vectorQuery).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("uses one query view when short-query rescue is disabled", async () => {
+    const { requestContext, embed, vectorQuery } = context({
+      query: "entry-disabled",
+      notes: [crossLanguageNote],
+      scores: { "We migrate the legacy notes": 0.62 },
+      env: { SEMANTIC_SHORT_QUERY_RESCUE: "false" },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      shortQueryRescue: { eligible: boolean; attempted: boolean; applied: boolean };
+    };
+    expect(payload.shortQueryRescue).toMatchObject({
+      eligible: false,
+      attempted: false,
+      applied: false,
+    });
+    expect(vectorQuery).toHaveBeenCalledTimes(1);
+    const queryBatch = embed.mock.calls
+      .map((call) => (call[1] as Record<string, unknown>).text)
+      .find((texts) => Array.isArray(texts) && texts.some((text) => String(text).includes("entry-disabled")));
+    expect(queryBatch).toHaveLength(1);
   });
 
   it("returns nothing when every chunk is below the absolute floor", async () => {
@@ -354,6 +543,62 @@ describe("chunk-level semantic search", () => {
     expect(payload.results).toEqual([]);
   });
 
+  it("overfetches index candidates, removes stale ids, and restores the configured valid budget", async () => {
+    const stale = note("note-stale", "Stale title", "stale top result");
+    const first = note("note-valid-a", "Valid A", "first valid result");
+    const second = note("note-valid-b", "Valid B", "second valid result");
+    const third = note("note-valid-c", "Valid C", "third valid result");
+    const staleBody = chunkRowsFor([stale]).find((row) => row.text.includes("stale top result"));
+    const { requestContext, vectorQuery } = context({
+      query: "stale overfetch regression query with context",
+      notes: [stale, first, second, third],
+      scores: {
+        "stale top result": 0.99,
+        "first valid result": 0.9,
+        "second valid result": 0.8,
+        "third valid result": 0.7,
+      },
+      defaultScore: 0.05,
+      staleChunkIds: [staleBody?.chunk_id ?? ""],
+      env: {
+        SEMANTIC_CHUNK_TOP_K: "2",
+        SEMANTIC_RELATIVE_MIN_RATIO: "0",
+      },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      candidateChunkCount: number;
+      resolvedChunkCount: number;
+      indexedUsedChunkCount: number;
+      usedChunkCount: number;
+      results: Array<{ id: string }>;
+    };
+
+    expect(vectorQuery).toHaveBeenCalledTimes(1);
+    expect(vectorQuery.mock.calls[0][1]).toMatchObject({ topK: 4 });
+    expect(payload).toMatchObject({
+      candidateChunkCount: 4,
+      resolvedChunkCount: 3,
+      indexedUsedChunkCount: 2,
+      usedChunkCount: 2,
+    });
+    expect(payload.results.map((result) => result.id)).toEqual(["note-valid-a", "note-valid-b"]);
+  });
+
+  it("caps Vectorize overfetch at the metadata-free query maximum", async () => {
+    const { requestContext, vectorQuery } = context({
+      query: "bounded overfetch maximum regression query",
+      notes: [crossLanguageNote],
+      scores: { "We migrate the legacy notes": 0.8 },
+      env: { SEMANTIC_CHUNK_TOP_K: "60" },
+    });
+
+    await semanticSearch(requestContext);
+
+    expect(vectorQuery).toHaveBeenCalledTimes(1);
+    expect(vectorQuery.mock.calls[0][1]).toMatchObject({ topK: 100 });
+  });
+
   it("scores a freshly saved note before the indexer reaches it", async () => {
     const pendingNote = note(
       "note-pending",
@@ -378,6 +623,172 @@ describe("chunk-level semantic search", () => {
     expect(payload.results[0].id).toBe("note-pending");
     expect(payload.results[0].matches[0].text).toContain("配对码");
     expect(payload.results[0].matches[0].lineNumber).toBe(2);
+  });
+
+  it("uses the same global chunk budget before and after pending notes become ready", async () => {
+    const notes = [
+      note("note-budget-a", "Budget A", "highest budget result"),
+      note("note-budget-b", "Budget B", "second budget result"),
+      note("note-budget-c", "Budget C", "third budget result"),
+    ];
+    const scores = {
+      "highest budget result": 0.9,
+      "second budget result": 0.8,
+      "third budget result": 0.7,
+    };
+    const sharedEnv = {
+      SEMANTIC_CHUNK_TOP_K: "2",
+      SEMANTIC_RELATIVE_MIN_RATIO: "0",
+    };
+
+    const ready = context({
+      query: "ready candidate budget regression query",
+      notes,
+      scores,
+      expandedScores: {},
+      defaultScore: 0.05,
+      expandedDefaultScore: 0,
+      env: sharedEnv,
+    });
+    const readyPayload = await (await semanticSearch(ready.requestContext)).json() as {
+      usedChunkCount: number;
+      results: Array<{ id: string; score: number }>;
+    };
+
+    const pendingNotes = notes.map((row) => ({ ...row, embedding_status: "pending" }));
+    const pending = context({
+      query: "pending candidate budget regression query",
+      notes: pendingNotes,
+      scores,
+      expandedScores: {},
+      defaultScore: 0.05,
+      expandedDefaultScore: 0,
+      env: sharedEnv,
+    });
+    const pendingPayload = await (await semanticSearch(pending.requestContext)).json() as {
+      indexedUsedChunkCount: number;
+      usedChunkCount: number;
+      pendingNotesScored: number;
+      results: Array<{ id: string; score: number }>;
+    };
+
+    expect(readyPayload.usedChunkCount).toBe(2);
+    expect(pendingPayload).toMatchObject({
+      indexedUsedChunkCount: 0,
+      usedChunkCount: 2,
+      pendingNotesScored: 3,
+    });
+    expect(pendingPayload.results.map((result) => result.id)).toEqual(
+      readyPayload.results.map((result) => result.id),
+    );
+    expect(pendingPayload.results.map((result) => result.score)).toEqual(
+      readyPayload.results.map((result) => result.score),
+    );
+    expect(readyPayload.results.map((result) => result.id)).toEqual([
+      "note-budget-a",
+      "note-budget-b",
+    ]);
+  });
+
+  it("excludes failed and disabled notes from the inline freshness fallback", async () => {
+    const ready = note("note-ready-only", "Ready", "indexed healthy result");
+    const failed = note("note-failed", "Failed", "failed note must stay out of inline scoring");
+    failed.embedding_status = "failed";
+    const disabled = note("note-disabled", "Disabled", "disabled note must stay out of inline scoring");
+    disabled.embedding_status = "disabled";
+    const { requestContext, embed } = context({
+      query: "status exclusion regression query with context",
+      notes: [ready, failed, disabled],
+      scores: { "indexed healthy result": 0.8 },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      pendingIndexCount: number;
+      pendingNotesScored: number;
+      pendingFallback: { attempted: boolean; degraded: boolean };
+      results: Array<{ id: string }>;
+    };
+    const embeddedText = JSON.stringify(embed.mock.calls.map((call) => call[1]));
+
+    expect(payload).toMatchObject({
+      pendingIndexCount: 0,
+      pendingNotesScored: 0,
+      pendingFallback: { attempted: false, degraded: false },
+    });
+    expect(payload.results.map((result) => result.id)).toEqual(["note-ready-only"]);
+    expect(embeddedText).not.toContain("failed note must stay out");
+    expect(embeddedText).not.toContain("disabled note must stay out");
+  });
+
+  it("keeps indexed results when inline pending-note embedding fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const ready = note("note-indexed-survivor", "Indexed", "healthy indexed answer");
+      const pending = note("note-inline-failure", "Pending", "inline document that fails");
+      pending.embedding_status = "pending";
+      const { requestContext } = context({
+        query: "inline failure isolation regression query",
+        notes: [ready, pending],
+        scores: { "healthy indexed answer": 0.82 },
+        inlineEmbeddingError: new Error("inline document embedding unavailable"),
+      });
+
+      const payload = await (await semanticSearch(requestContext)).json() as {
+        pendingIndexCount: number;
+        pendingNotesScored: number;
+        pendingFallback: { attempted: boolean; degraded: boolean };
+        results: Array<{ id: string }>;
+      };
+
+      expect(payload).toMatchObject({
+        pendingIndexCount: 1,
+        pendingNotesScored: 0,
+        pendingFallback: { attempted: true, degraded: true },
+      });
+      expect(payload.results.map((result) => result.id)).toEqual(["note-indexed-survivor"]);
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("merges pending chunks with partial indexed coverage per chunk", async () => {
+    const pending = note(
+      "note-partial",
+      "恢复说明",
+      "目前恢复入口只有接口，没有界面。\n接口恢复说明位于文档末尾。",
+    );
+    pending.embedding_status = "processing";
+    const { requestContext } = context({
+      query: "entry-partial-index",
+      notes: [pending],
+      indexedChunkNeedles: ["接口恢复说明"],
+      scores: {
+        "目前恢复入口": 0.252,
+        "接口恢复说明": 0.257,
+      },
+      expandedScores: {
+        "目前恢复入口": 0.322,
+        "接口恢复说明": 0.249,
+      },
+      env: {
+        SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS: "40",
+        SEMANTIC_CHUNK_MAX_LINES: "1",
+        SEMANTIC_CHUNK_OVERLAP_LINES: "0",
+      },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      shortQueryRescue: { consensusChunkCount: number; addedNoteCount: number };
+      results: Array<{ id: string; matches: Array<{ text: string; lineNumber: number }> }>;
+    };
+    expect(payload.results[0].id).toBe("note-partial");
+    expect(payload.results[0].matches[0]).toMatchObject({ lineNumber: 1 });
+    expect(payload.results[0].matches[0].text).toContain("入口");
+    expect(payload.shortQueryRescue).toMatchObject({
+      consensusChunkCount: 1,
+      addedNoteCount: 1,
+    });
   });
 
   it("caps matched lines per note and keeps the strongest anchor", async () => {
@@ -511,13 +922,23 @@ describe("chunk-level semantic search", () => {
 
     const payload = await (await semanticSearch(requestContext)).json() as {
       spanRefinement: { refinedMatchCount: number; candidateCount: number };
-      results: Array<{ matches: Array<{ text: string; charStart: number; charEnd: number }> }>;
+      results: Array<{
+        matches: Array<{
+          text: string;
+          lineNumber: number;
+          lineStart: number;
+          lineEnd: number;
+          charStart: number;
+          charEnd: number;
+        }>;
+      }>;
     };
 
     expect(payload.spanRefinement.refinedMatchCount).toBe(1);
     expect(payload.spanRefinement.candidateCount).toBeGreaterThan(0);
     const [match] = payload.results[0].matches;
     expect(match.text).toBe("We migrate the legacy notes into the new schema.");
+    expect(match).toMatchObject({ lineNumber: 3, lineStart: 3, lineEnd: 3 });
     expect(note.body.slice(match.charStart, match.charEnd)).toBe(match.text);
   });
 

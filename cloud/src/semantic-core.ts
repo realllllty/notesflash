@@ -39,10 +39,9 @@ export interface AggregationOptions {
 }
 
 /**
- * Calibrated on the evaluation corpus with EmbeddingGemma line-window chunks:
- * negative-only queries peaked at 0.231 while the weakest true positive scored
- * 0.345, so a 0.3 floor rejects "nothing matches" without dropping real hits.
- * The relative rule then trims the weak tail behind a clearly better chunk.
+ * Stable primary defaults. The 0.3 floor is deliberately not lowered to fix a
+ * short-query miss; weaker chunks need independent same-anchor corroboration
+ * through `appendShortQueryConsensus`. The relative rule trims weak tails.
  */
 export const DEFAULT_AGGREGATION: AggregationOptions = {
   minCosine: 0.3,
@@ -135,7 +134,7 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 
 export interface AggregatedNote {
   noteId: string;
-  /** Best chunk score plus the multi-chunk bonus; drives note ordering. */
+  /** Primary ordering score; rescued-note RRF ordering is applied before this shape. */
   score: number;
   /** Best raw cosine score, unaffected by the bonus. */
   bestScore: number;
@@ -153,6 +152,35 @@ export interface AggregationResult {
   matchedChunkCount: number;
 }
 
+export interface ShortQueryConsensusOptions {
+  /** Lower raw-view floor used only when the expanded view corroborates it. */
+  rawMinCosine: number;
+  /** Independent floor for the contextual query view. */
+  expandedMinCosine: number;
+  /** Apply the same weak-tail rule to both views. */
+  relativeMinRatio: number;
+  maxMatchesPerNote: number;
+  topK: number;
+}
+
+export interface ShortQueryConsensusDiagnostics {
+  rawFloor: number;
+  expandedFloor: number;
+  /** Weak chunks accepted by both views at the exact same chunk ID. */
+  consensusChunkCount: number;
+  /** Notes represented by those chunks, including already-primary notes. */
+  candidateNoteCount: number;
+  /** New notes actually appended after the primary raw ranking. */
+  addedNoteCount: number;
+  /** Primary notes that gained at least one additional line match. */
+  enrichedNoteCount: number;
+}
+
+export interface ShortQueryConsensusResult {
+  aggregation: AggregationResult;
+  diagnostics: ShortQueryConsensusDiagnostics;
+}
+
 /** Prefer the strongest chunk per anchor line so one line is never repeated. */
 function dedupeByAnchor(hits: ChunkHit[]): ChunkHit[] {
   const byAnchor = new Map<string, ChunkHit>();
@@ -164,6 +192,63 @@ function dedupeByAnchor(hits: ChunkHit[]): ChunkHit[] {
   return [...byAnchor.values()].sort(
     (left, right) => right.score - left.score || left.chunkIndex - right.chunkIndex,
   );
+}
+
+interface RankedConsensusHit {
+  hit: ChunkHit;
+  expandedScore: number;
+  rawRank: number;
+  expandedRank: number;
+  rrfScore: number;
+}
+
+function anchorKey(hit: ChunkHit): string {
+  return hit.kind === "title" ? "title" : `line:${hit.primaryLine}`;
+}
+
+/** Vectorize should not duplicate IDs, but the pending-index merge is defensive. */
+function rankUniqueChunks(hits: readonly ChunkHit[]): ChunkHit[] {
+  const strongest = new Map<string, ChunkHit>();
+  for (const hit of hits) {
+    const existing = strongest.get(hit.chunkId);
+    if (!existing || hit.score > existing.score) strongest.set(hit.chunkId, hit);
+  }
+  return [...strongest.values()].sort(
+    (left, right) => right.score - left.score || left.chunkId.localeCompare(right.chunkId),
+  );
+}
+
+function compareConsensus(left: RankedConsensusHit, right: RankedConsensusHit): number {
+  return right.rrfScore - left.rrfScore ||
+    right.expandedScore - left.expandedScore ||
+    right.hit.score - left.hit.score ||
+    left.hit.chunkId.localeCompare(right.hit.chunkId);
+}
+
+/** Keep the best two-view candidate for each visible title/body line anchor. */
+function dedupeConsensusAnchors(hits: RankedConsensusHit[]): RankedConsensusHit[] {
+  const byAnchor = new Map<string, RankedConsensusHit>();
+  for (const hit of hits) {
+    const key = anchorKey(hit.hit);
+    const existing = byAnchor.get(key);
+    if (!existing || compareConsensus(hit, existing) < 0) byAnchor.set(key, hit);
+  }
+  return [...byAnchor.values()].sort(compareConsensus);
+}
+
+/**
+ * A positive best score supports a proportional weak-tail floor. Multiplying a
+ * negative best score by a ratio below one makes the result less negative and
+ * therefore higher than the best candidate, which would incorrectly remove
+ * every hit. In that case only the configured absolute floor is meaningful.
+ */
+function effectiveScoreFloor(
+  absoluteFloor: number,
+  topScore: number | null,
+  relativeMinRatio: number,
+): number {
+  if (topScore === null || topScore <= 0) return absoluteFloor;
+  return Math.max(absoluteFloor, topScore * relativeMinRatio);
 }
 
 /**
@@ -182,9 +267,11 @@ export function aggregateChunkHits(
     (best, hit) => (best === null || hit.score > best ? hit.score : best),
     null,
   );
-  const effectiveFloor = topChunkScore === null
-    ? options.minCosine
-    : Math.max(options.minCosine, topChunkScore * options.relativeMinRatio);
+  const effectiveFloor = effectiveScoreFloor(
+    options.minCosine,
+    topChunkScore,
+    options.relativeMinRatio,
+  );
 
   const kept = hits.filter((hit) => hit.score >= effectiveFloor);
   const byNote = new Map<string, ChunkHit[]>();
@@ -215,5 +302,145 @@ export function aggregateChunkHits(
     effectiveFloor,
     consideredChunkCount: hits.length,
     matchedChunkCount: kept.length,
+  };
+}
+
+/**
+ * Append-only rescue for ambiguous short queries.
+ *
+ * The ordinary raw-query aggregation stays authoritative. A below-primary
+ * chunk is admitted only when a contextual query view independently retrieves
+ * the exact same chunk ID. Existing note order, note scores, and existing match
+ * order never change. Newly admitted notes are appended and ordered internally
+ * with reciprocal-rank fusion; their public score remains the raw cosine.
+ */
+export function appendShortQueryConsensus(
+  primary: AggregationResult,
+  rawHits: readonly ChunkHit[],
+  expandedHits: readonly ChunkHit[],
+  options: ShortQueryConsensusOptions,
+): ShortQueryConsensusResult {
+  const rawRanked = rankUniqueChunks(rawHits);
+  const expandedRanked = rankUniqueChunks(expandedHits);
+  const rawTop = rawRanked[0]?.score ?? null;
+  const expandedTop = expandedRanked[0]?.score ?? null;
+  const rawFloor = effectiveScoreFloor(
+    options.rawMinCosine,
+    rawTop,
+    options.relativeMinRatio,
+  );
+  const expandedFloor = effectiveScoreFloor(
+    options.expandedMinCosine,
+    expandedTop,
+    options.relativeMinRatio,
+  );
+
+  const expandedById = new Map(
+    expandedRanked.map((hit, index) => [hit.chunkId, { hit, rank: index + 1 }]),
+  );
+  const consensus: RankedConsensusHit[] = [];
+  rawRanked.forEach((raw, rawIndex) => {
+    // A strong raw chunk is already represented by primary aggregation. The
+    // second view is intentionally not allowed to rewrite that ranking.
+    if (raw.score >= primary.effectiveFloor || raw.score < rawFloor) return;
+    const expanded = expandedById.get(raw.chunkId);
+    if (!expanded || expanded.hit.score < expandedFloor) return;
+    const rawRank = rawIndex + 1;
+    const expandedRank = expanded.rank;
+    consensus.push({
+      hit: raw,
+      expandedScore: expanded.hit.score,
+      rawRank,
+      expandedRank,
+      rrfScore: 1 / (60 + rawRank) + 1 / (60 + expandedRank),
+    });
+  });
+  consensus.sort(compareConsensus);
+
+  const candidatesByNote = new Map<string, RankedConsensusHit[]>();
+  for (const candidate of consensus) {
+    const list = candidatesByNote.get(candidate.hit.noteId) ?? [];
+    list.push(candidate);
+    candidatesByNote.set(candidate.hit.noteId, list);
+  }
+
+  const primaryNotes = primary.notes.map((note) => ({ ...note, matches: [...note.matches] }));
+  const primaryById = new Map(primaryNotes.map((note) => [note.noteId, note]));
+  const primaryAnchorsByNote = new Map<string, Set<string>>();
+  for (const hit of rawRanked.filter((candidate) => candidate.score >= primary.effectiveFloor)) {
+    const anchors = primaryAnchorsByNote.get(hit.noteId) ?? new Set<string>();
+    anchors.add(anchorKey(hit));
+    primaryAnchorsByNote.set(hit.noteId, anchors);
+  }
+  let enrichedNoteCount = 0;
+  for (const [noteId, candidates] of candidatesByNote) {
+    const note = primaryById.get(noteId);
+    if (!note) continue;
+    const existingAnchors = primaryAnchorsByNote.get(noteId) ?? new Set(note.matches.map(anchorKey));
+    const additional = dedupeConsensusAnchors(candidates).filter(
+      (candidate) => !existingAnchors.has(anchorKey(candidate.hit)),
+    );
+    note.matchedChunkCount += additional.length;
+    for (const candidate of additional) {
+      if (note.matches.length >= options.maxMatchesPerNote) break;
+      const anchor = anchorKey(candidate.hit);
+      existingAnchors.add(anchor);
+      note.matches.push(candidate.hit);
+    }
+    if (additional.length > 0) enrichedNoteCount += 1;
+  }
+
+  const rescuedNotes = [...candidatesByNote.entries()]
+    .filter(([noteId]) => !primaryById.has(noteId))
+    .map(([noteId, candidates]) => {
+      const ranked = dedupeConsensusAnchors(candidates);
+      const best = ranked[0];
+      const bestScore = best.hit.score;
+      return {
+        note: {
+          noteId,
+          // RRF controls only the order of rescued notes. Exposed scores remain
+          // comparable with every other result because they are raw cosines.
+          score: bestScore,
+          bestScore,
+          matchedChunkCount: ranked.length,
+          matches: ranked.slice(0, options.maxMatchesPerNote).map((candidate) => candidate.hit),
+        } satisfies AggregatedNote,
+        rrfScore: best.rrfScore,
+        expandedScore: best.expandedScore,
+        rawScore: best.hit.score,
+      };
+    })
+    .sort((left, right) =>
+      right.rrfScore - left.rrfScore ||
+      right.expandedScore - left.expandedScore ||
+      right.rawScore - left.rawScore ||
+      left.note.noteId.localeCompare(right.note.noteId)
+    );
+
+  const available = Math.max(0, options.topK - primaryNotes.length);
+  const appended = rescuedNotes.slice(0, available).map((entry) => entry.note);
+  const rawKeptIds = new Set(
+    rawRanked.filter((hit) => hit.score >= primary.effectiveFloor).map((hit) => hit.chunkId),
+  );
+  const newlyMatched = consensus.reduce(
+    (count, candidate) => count + (rawKeptIds.has(candidate.hit.chunkId) ? 0 : 1),
+    0,
+  );
+
+  return {
+    aggregation: {
+      ...primary,
+      notes: [...primaryNotes, ...appended],
+      matchedChunkCount: primary.matchedChunkCount + newlyMatched,
+    },
+    diagnostics: {
+      rawFloor,
+      expandedFloor,
+      consensusChunkCount: consensus.length,
+      candidateNoteCount: candidatesByNote.size,
+      addedNoteCount: appended.length,
+      enrichedNoteCount,
+    },
   };
 }

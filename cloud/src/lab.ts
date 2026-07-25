@@ -12,15 +12,16 @@
  * - `LAB_ENABLED` must be exactly "true".
  * - `LAB_TOKEN_SHA256` holds only the SHA-256 hex of a 32-byte token; the
  *   plaintext never enters the repository.
- * - A paired device Bearer token is also accepted, so the owner can use it
- *   without a separate secret.
+ * - A paired device Bearer token is also accepted after the kill switch and
+ *   lab-token hash are configured, but it receives read-only actions only.
  * - Anything else gets the same 404 as an unknown route, so the endpoint does
  *   not advertise itself.
- * - Note text is returned only when the caller explicitly asks for it.
- *
- * Turn `LAB_ENABLED` off (or delete this module) before any public release.
+ * - Responses are anonymous-only: no note IDs, titles, bodies, image URLs, or
+ *   matched text are ever returned, even to the operator token.
  */
 import { authenticate } from "./auth";
+import { deleteAiSearchItemsForNotes } from "./ai-search-index";
+import { aiSearchConfig } from "./ai-search";
 import {
   buildNoteChunks,
   DEFAULT_CHUNKING,
@@ -40,22 +41,34 @@ import {
 import { AppError, json, readJson } from "./http";
 import { enforceRateLimit } from "./rate-limit";
 import { semanticSearch } from "./search";
-import { retrieveSemanticMatches } from "./semantic";
-import { semanticConfig } from "./semantic-config";
+import {
+  isShortQueryRescueEligible,
+  retrieveSemanticMatches,
+  SHORT_QUERY_EXPANSION_PREFIX,
+} from "./semantic";
+import {
+  DEFAULT_SHORT_QUERY_RESCUE,
+  semanticConfig,
+  type ShortQueryRescueOptions,
+} from "./semantic-config";
 import { refineSpans } from "./span-refine";
 import { DEFAULT_PRUNE, pruneOrphanChunkVectors } from "./vector-prune";
 import {
   aggregateChunkHits,
+  appendShortQueryConsensus,
   cosineSimilarity,
   DEFAULT_AGGREGATION,
   resolveAggregationOptions,
   type AggregationOptions,
   type ChunkHit,
 } from "./semantic-core";
-import type { EmbedNoteJob, Env, RequestContext } from "./types";
+import type { EmbedNoteJob, Env, IndexJob, RequestContext, SyncAiSearchNoteJob } from "./types";
 
-/** Seeded evaluation notes are the only rows the lab may create or destroy. */
-export const EVAL_TITLE_PREFIX = "[EVAL";
+/** Input marker accepted from the local harness; never stored or embedded. */
+export const EVAL_TITLE_PREFIX = "[EVAL:";
+const EVAL_INPUT_PATTERN = /^\[EVAL:([a-z0-9-]+)\]\s*/;
+/** Server-owned marker stored outside searchable title/body content. */
+const EVAL_MUTATION_PREFIX = "notesflash-search-lab-eval:";
 
 const MAX_STRATEGIES = 4;
 const MAX_QUERIES = 6;
@@ -72,7 +85,7 @@ function notFound(): AppError {
 
 export function labConfigured(env: Env): boolean {
   return (env.LAB_ENABLED ?? "").trim() === "true" &&
-    (env.LAB_TOKEN_SHA256 ?? "").trim().length === 64;
+    /^[a-f0-9]{64}$/i.test((env.LAB_TOKEN_SHA256 ?? "").trim());
 }
 
 function bearerToken(request: Request): string | null {
@@ -87,8 +100,9 @@ function bearerToken(request: Request): string | null {
 type LabActor = "lab-token" | "device";
 
 async function authorizeLab(context: RequestContext): Promise<LabActor> {
+  if (!labConfigured(context.env)) throw notFound();
   const token = bearerToken(context.request);
-  if (token && labConfigured(context.env)) {
+  if (token) {
     const expected = (context.env.LAB_TOKEN_SHA256 ?? "").trim().toLowerCase();
     const actual = (await sha256Hex(token)).toLowerCase();
     if (constantTimeEqual(expected, actual)) return "lab-token";
@@ -128,12 +142,31 @@ interface CorpusNote {
   contentHash: string;
 }
 
+function evalKeyFromMetadata(title: string, mutationId: string | null | undefined): string | null {
+  if (mutationId?.startsWith(EVAL_MUTATION_PREFIX)) {
+    const key = mutationId.slice(EVAL_MUTATION_PREFIX.length);
+    return /^[a-z0-9-]+$/.test(key) ? key : null;
+  }
+  // Backward-compatible cleanup/mapping for rows seeded by an older lab build.
+  return title.match(EVAL_INPUT_PATTERN)?.[1] ?? null;
+}
+
+async function anonymousNoteRef(
+  id: string,
+  title: string,
+  mutationId: string | null | undefined,
+): Promise<string> {
+  const evalKey = evalKeyFromMetadata(title, mutationId);
+  return evalKey ?? `note-${(await sha256Hex(`search-lab-ref\u0000${id}`)).slice(0, 12)}`;
+}
+
 interface LabStrategy {
   name: string;
   spec: EmbeddingModelSpec;
   instruction?: string;
   chunking: ChunkingOptions;
   aggregation: AggregationOptions;
+  shortQueryRescue: ShortQueryRescueOptions;
 }
 
 function invalid(message: string): AppError {
@@ -145,6 +178,72 @@ function asRecord(value: unknown, name: string): Record<string, unknown> {
     throw invalid(`${name} must be an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+function parseLabShortQueryRescue(
+  value: unknown,
+  model: string,
+  aggregation: AggregationOptions,
+  name: string,
+): ShortQueryRescueOptions {
+  const base: ShortQueryRescueOptions = {
+    ...DEFAULT_SHORT_QUERY_RESCUE,
+    enabled: model === DEFAULT_EMBEDDING_MODEL,
+  };
+  if (value === undefined) return base;
+  const record = asRecord(value, name);
+  const allowed = new Set([
+    "enabled",
+    "maxCodePoints",
+    "maxTokens",
+    "rawMinCosine",
+    "expandedMinCosine",
+  ]);
+  const unknown = Object.keys(record).find((key) => !allowed.has(key));
+  if (unknown) throw invalid(`${name}.${unknown} is not supported.`);
+
+  const boolean = (key: string, fallback: boolean): boolean => {
+    const candidate = record[key];
+    if (candidate === undefined) return fallback;
+    if (typeof candidate !== "boolean") throw invalid(`${name}.${key} must be a boolean.`);
+    return candidate;
+  };
+  const number = (key: string, fallback: number): number => {
+    const candidate = record[key];
+    if (candidate === undefined) return fallback;
+    if (typeof candidate !== "number" || !Number.isFinite(candidate)) {
+      throw invalid(`${name}.${key} must be a finite number.`);
+    }
+    return candidate;
+  };
+  const integer = (key: string, fallback: number): number => {
+    const candidate = number(key, fallback);
+    if (!Number.isInteger(candidate)) throw invalid(`${name}.${key} must be an integer.`);
+    return candidate;
+  };
+  const resolved: ShortQueryRescueOptions = {
+    enabled: boolean("enabled", base.enabled),
+    maxCodePoints: integer("maxCodePoints", base.maxCodePoints),
+    maxTokens: integer("maxTokens", base.maxTokens),
+    rawMinCosine: number("rawMinCosine", base.rawMinCosine),
+    expandedMinCosine: number("expandedMinCosine", base.expandedMinCosine),
+  };
+  if (resolved.maxCodePoints < 1 || resolved.maxCodePoints > 500) {
+    throw invalid(`${name}.maxCodePoints must be between 1 and 500.`);
+  }
+  if (resolved.maxTokens < 1 || resolved.maxTokens > 100) {
+    throw invalid(`${name}.maxTokens must be between 1 and 100.`);
+  }
+  if (
+    resolved.rawMinCosine < -1 || resolved.rawMinCosine > 1 ||
+    resolved.expandedMinCosine < -1 || resolved.expandedMinCosine > 1
+  ) {
+    throw invalid(`${name} cosine floors must be between -1 and 1.`);
+  }
+  if (resolved.enabled && resolved.rawMinCosine >= aggregation.minCosine) {
+    throw invalid(`${name}.rawMinCosine must be below aggregation.minCosine.`);
+  }
+  return resolved;
 }
 
 function parseStrategies(value: unknown): LabStrategy[] {
@@ -167,22 +266,31 @@ function parseStrategies(value: unknown): LabStrategy[] {
     }
 
     try {
+      const spec = embeddingModelSpec(model);
+      const chunking = resolveChunkingOptions(
+        record.chunking === undefined
+          ? undefined
+          : (asRecord(record.chunking, `strategies[${index}].chunking`) as Partial<ChunkingOptions>),
+      );
+      const aggregation = resolveAggregationOptions(
+        record.aggregation === undefined
+          ? undefined
+          : (asRecord(
+            record.aggregation,
+            `strategies[${index}].aggregation`,
+          ) as Partial<AggregationOptions>),
+      );
       return {
         name,
-        spec: embeddingModelSpec(model),
+        spec,
         instruction,
-        chunking: resolveChunkingOptions(
-          record.chunking === undefined
-            ? undefined
-            : (asRecord(record.chunking, `strategies[${index}].chunking`) as Partial<ChunkingOptions>),
-        ),
-        aggregation: resolveAggregationOptions(
-          record.aggregation === undefined
-            ? undefined
-            : (asRecord(
-              record.aggregation,
-              `strategies[${index}].aggregation`,
-            ) as Partial<AggregationOptions>),
+        chunking,
+        aggregation,
+        shortQueryRescue: parseLabShortQueryRescue(
+          record.shortQueryRescue,
+          spec.id,
+          aggregation,
+          `strategies[${index}].shortQueryRescue`,
         ),
       };
     } catch (error) {
@@ -219,29 +327,40 @@ async function loadCorpus(context: RequestContext, body: LabBody): Promise<Corpu
     throw invalid(`maxNotes must be an integer between 1 and ${MAX_CORPUS_NOTES}.`);
   }
 
+  const evalPredicate = `(
+    COALESCE(mutation_id, '') LIKE '${EVAL_MUTATION_PREFIX}%'
+    OR title LIKE '[EVAL:%'
+  )`;
   const filter = corpus === "eval"
-    ? "AND title LIKE '[EVAL%'"
+    ? `AND ${evalPredicate}`
     : corpus === "real"
-    ? "AND title NOT LIKE '[EVAL%'"
+    ? `AND NOT ${evalPredicate}`
     : "";
   const rows = (await context.env.DB.prepare(
-    `SELECT id, title, body, content_hash
+    `SELECT id, title, body, content_hash, mutation_id
      FROM notes
      WHERE deleted_at IS NULL ${filter}
      ORDER BY id ASC
      LIMIT ?`,
   )
     .bind(maxNotes)
-    .all<{ id: string; title: string; body: string; content_hash: string }>()).results;
+    .all<{
+      id: string;
+      title: string;
+      body: string;
+      content_hash: string;
+      mutation_id: string | null;
+    }>()).results;
 
   const notes: CorpusNote[] = [];
   let characters = 0;
   for (const row of rows) {
     characters += row.title.length + row.body.length;
     if (characters > MAX_CORPUS_CHARS) break;
+    const evalKey = evalKeyFromMetadata(row.title, row.mutation_id);
     notes.push({
       id: row.id,
-      ref: (await sha256Hex(row.id)).slice(0, 10),
+      ref: evalKey ?? await anonymousNoteRef(row.id, row.title, row.mutation_id),
       title: row.title,
       body: row.body,
       contentHash: row.content_hash,
@@ -365,7 +484,6 @@ function percentile(sorted: number[], fraction: number): number | null {
 }
 
 async function runSweep(context: RequestContext, body: LabBody): Promise<Response> {
-  const includeText = body.includeText === true;
   const queries = parseQueries(body);
   const strategies = parseStrategies(body.strategies);
   const startedAt = performance.now();
@@ -375,10 +493,18 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
 
   const strategyReports = [];
   for (const strategy of strategies) {
+    const shortQueryRescue = strategy.shortQueryRescue;
     const chunkStartedAt = performance.now();
     const records: ChunkRecord[] = [];
     for (const note of notes) {
-      for (const chunk of buildNoteChunks(note, strategy.chunking)) {
+      // The marker is only an evaluation identity used for seed/cleanup and
+      // expected-result mapping. Letting its English key reach the embedding
+      // text would leak the answer into cross-language retrieval metrics.
+      const embeddingNote = {
+        ...note,
+        title: note.title.replace(/^\[EVAL:[a-z0-9-]+\]\s*/, ""),
+      };
+      for (const chunk of buildNoteChunks(embeddingNote, strategy.chunking)) {
         records.push({ note, chunk });
       }
     }
@@ -392,10 +518,18 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
       "document",
       strategy.instruction,
     );
+    const queryTexts: string[] = [];
+    const queryViewIndexes = queries.map((query) => {
+      const raw = queryTexts.push(query) - 1;
+      const expanded = isShortQueryRescueEligible(query, shortQueryRescue)
+        ? queryTexts.push(`${SHORT_QUERY_EXPANSION_PREFIX}${query}`) - 1
+        : null;
+      return { raw, expanded };
+    });
     const queryEmbeddings = await embedWithCache(
       context,
       strategy.spec,
-      queries,
+      queryTexts,
       "query",
       strategy.instruction,
     );
@@ -403,8 +537,9 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
 
     const scoreStartedAt = performance.now();
     const queryReports = queries.map((query, queryIndex) => {
-      const queryVector = queryEmbeddings.vectors[queryIndex];
-      const hits: ChunkHit[] = records.map((record, index) => ({
+      const viewIndexes = queryViewIndexes[queryIndex];
+      const rawVector = queryEmbeddings.vectors[viewIndexes.raw];
+      const rawAll: ChunkHit[] = records.map((record, index) => ({
         noteId: record.note.id,
         chunkId: `${record.note.ref}:${record.chunk.chunkIndex}`,
         chunkIndex: record.chunk.chunkIndex,
@@ -414,17 +549,71 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
         lineEnd: record.chunk.lineEnd,
         charStart: record.chunk.charStart,
         charEnd: record.chunk.charEnd,
-        score: cosineSimilarity(queryVector, documents.vectors[index]),
+        score: cosineSimilarity(rawVector, documents.vectors[index]),
         text: record.chunk.text,
       }));
-      const aggregated = aggregateChunkHits(hits, strategy.aggregation);
-      const sortedScores = hits.map((hit) => hit.score).sort((left, right) => left - right);
+      const rawHits = rawAll
+        .slice()
+        .sort((left, right) => right.score - left.score || left.chunkId.localeCompare(right.chunkId))
+        .slice(0, 40);
+      const expandedHits = viewIndexes.expanded === null
+        ? []
+        : records.map((record, index): ChunkHit => ({
+          noteId: record.note.id,
+          chunkId: `${record.note.ref}:${record.chunk.chunkIndex}`,
+          chunkIndex: record.chunk.chunkIndex,
+          kind: record.chunk.kind,
+          primaryLine: record.chunk.primaryLine,
+          lineStart: record.chunk.lineStart,
+          lineEnd: record.chunk.lineEnd,
+          charStart: record.chunk.charStart,
+          charEnd: record.chunk.charEnd,
+          score: cosineSimilarity(
+            queryEmbeddings.vectors[viewIndexes.expanded as number],
+            documents.vectors[index],
+          ),
+          text: record.chunk.text,
+        }))
+          .sort((left, right) =>
+            right.score - left.score || left.chunkId.localeCompare(right.chunkId)
+          )
+          .slice(0, 40);
+      const primary = aggregateChunkHits(rawHits, strategy.aggregation);
+      const consensus = viewIndexes.expanded === null
+        ? null
+        : appendShortQueryConsensus(primary, rawHits, expandedHits, {
+          rawMinCosine: shortQueryRescue.rawMinCosine,
+          expandedMinCosine: shortQueryRescue.expandedMinCosine,
+          relativeMinRatio: strategy.aggregation.relativeMinRatio,
+          maxMatchesPerNote: strategy.aggregation.maxMatchesPerNote,
+          topK: strategy.aggregation.topK,
+        });
+      const aggregated = consensus?.aggregation ?? primary;
+      const sortedScores = rawAll.map((hit) => hit.score).sort((left, right) => left - right);
+      const expandedById = new Map(expandedHits.map((hit) => [hit.chunkId, hit.score]));
 
       return {
         query,
         topChunkScore: aggregated.topChunkScore,
         effectiveFloor: aggregated.effectiveFloor,
         matchedChunkCount: aggregated.matchedChunkCount,
+        candidateChunkCount: rawHits.length,
+        expandedCandidateChunkCount: expandedHits.length,
+        shortQueryRescue: {
+          eligible: viewIndexes.expanded !== null,
+          attempted: viewIndexes.expanded !== null,
+          applied: viewIndexes.expanded !== null,
+          expandedIndexAvailable: viewIndexes.expanded !== null,
+          expandedVectorizeFailed: false,
+          ...(consensus?.diagnostics ?? {
+            rawFloor: shortQueryRescue.rawMinCosine,
+            expandedFloor: shortQueryRescue.expandedMinCosine,
+            consensusChunkCount: 0,
+            candidateNoteCount: 0,
+            addedNoteCount: 0,
+            enrichedNoteCount: 0,
+          }),
+        },
         scoreStats: {
           max: percentile(sortedScores, 1),
           p99: percentile(sortedScores, 0.99),
@@ -433,16 +622,11 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
           min: percentile(sortedScores, 0),
           histogram: histogram(sortedScores),
         },
-        // Unfiltered ranking, so a threshold sweep can be replayed offline
-        // without paying for embeddings again.
-        rankedChunks: hits
-          .slice()
-          .sort((left, right) => right.score - left.score)
-          .slice(0, 20)
+        // Production-depth raw ranking. Expanded scores are attached only when
+        // that exact chunk also appeared in the contextual top 40.
+        rankedChunks: rawHits
           .map((hit) => ({
             noteRef: noteById.get(hit.noteId)?.ref ?? "unknown",
-            noteId: includeText ? hit.noteId : undefined,
-            title: includeText ? noteById.get(hit.noteId)?.title : undefined,
             kind: hit.kind,
             lineNumber: hit.primaryLine,
             lineStart: hit.lineStart,
@@ -450,13 +634,11 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
             charStart: hit.charStart,
             charEnd: hit.charEnd,
             score: hit.score,
-            text: includeText ? hit.text : undefined,
+            expandedScore: expandedById.get(hit.chunkId) ?? null,
           })),
         results: aggregated.notes.map((note, rank) => ({
           rank: rank + 1,
           noteRef: noteById.get(note.noteId)?.ref ?? "unknown",
-          noteId: includeText ? note.noteId : undefined,
-          title: includeText ? noteById.get(note.noteId)?.title : undefined,
           score: note.score,
           bestScore: note.bestScore,
           matchedChunkCount: note.matchedChunkCount,
@@ -468,7 +650,6 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
             charStart: match.charStart,
             charEnd: match.charEnd,
             score: match.score,
-            text: includeText ? match.text : undefined,
           })),
         })),
       };
@@ -484,6 +665,7 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
         : null,
       chunking: strategy.chunking,
       aggregation: strategy.aggregation,
+      shortQueryRescue,
       chunkCount: records.length,
       uniqueChunkTexts: new Set(records.map((record) => record.chunk.embedText)).size,
       aiCalls: documents.aiCalls + queryEmbeddings.aiCalls,
@@ -500,7 +682,7 @@ async function runSweep(context: RequestContext, body: LabBody): Promise<Respons
 
   return json({
     action: "sweep",
-    includeText,
+    privacyMode: "anonymous-only",
     noteCount: notes.length,
     corpusChars: notes.reduce((sum, note) => sum + note.title.length + note.body.length, 0),
     timings: {
@@ -569,11 +751,34 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
      FROM notes WHERE deleted_at IS NULL
      GROUP BY embedding_status`,
   ).all<{ status: string; count: number }>()).results;
+  const aiStatusRows = (await context.env.DB.prepare(
+    `SELECT ai_search_status AS status, COUNT(*) AS count
+     FROM notes WHERE deleted_at IS NULL
+     GROUP BY ai_search_status`,
+  ).all<{ status: string; count: number }>()).results;
+  const aiItemStatusRows = (await context.env.DB.prepare(
+    `SELECT sync_state AS status, COUNT(*) AS count
+     FROM ai_search_items
+     GROUP BY sync_state`,
+  ).all<{ status: string; count: number }>()).results;
+  const currentAiItemRow = await context.env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM ai_search_items a
+     JOIN notes n ON n.id = a.note_id
+     WHERE n.deleted_at IS NULL
+       AND n.content_hash = a.note_content_hash
+       AND a.sync_state = 'ready'`,
+  ).first<{ count: number }>();
   const cacheRow = await context.env.DB.prepare(
     "SELECT COUNT(*) AS count FROM lab_embedding_cache",
   ).first<{ count: number }>();
   const evalRow = await context.env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM notes WHERE deleted_at IS NULL AND title LIKE '[EVAL%'",
+    `SELECT COUNT(*) AS count FROM notes
+     WHERE deleted_at IS NULL
+       AND (
+         mutation_id LIKE '${EVAL_MUTATION_PREFIX}%'
+         OR title LIKE '[EVAL:%'
+       )`,
   ).first<{ count: number }>();
   const indexedRow = await context.env.DB.prepare(
     `SELECT COUNT(*) AS count
@@ -629,6 +834,11 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
       max: percentile(lengths, 1),
     },
     embeddingStatus: Object.fromEntries(statusRows.map((row) => [row.status, row.count])),
+    aiSearchStatus: Object.fromEntries(aiStatusRows.map((row) => [row.status, row.count])),
+    aiSearchItemsByState: Object.fromEntries(
+      aiItemStatusRows.map((row) => [row.status, row.count]),
+    ),
+    currentAiSearchItems: currentAiItemRow?.count ?? 0,
     indexedChunkRows: indexedRow?.count ?? 0,
     staleChunkRows: staleRow?.count ?? 0,
     vectorizeVectorCount: vectorCount,
@@ -637,101 +847,90 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
   });
 }
 
-async function runSeed(context: RequestContext, body: LabBody): Promise<Response> {
-  const raw = body.notes;
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SEED_NOTES) {
-    throw invalid(`notes must be an array of 1 to ${MAX_SEED_NOTES} objects.`);
-  }
-  const enqueue = body.enqueue !== false;
-
-  const parsed = raw.map((item, index) => {
-    const record = asRecord(item, `notes[${index}]`);
-    const title = record.title;
-    const noteBody = record.body ?? "";
-    if (typeof title !== "string" || !title.startsWith(EVAL_TITLE_PREFIX) || title.length > 500) {
-      throw invalid(`notes[${index}].title must start with "${EVAL_TITLE_PREFIX}".`);
-    }
-    if (typeof noteBody !== "string" || noteBody.length > 200_000) {
-      throw invalid(`notes[${index}].body must be a string of at most 200000 characters.`);
-    }
-    return { title, body: noteBody };
-  });
-
-  const now = Date.now();
-  let inserted = 0;
-  let replaced = 0;
-  const jobs: EmbedNoteJob[] = [];
-
-  for (const note of parsed) {
-    // Only ever touches rows whose title carries the eval prefix, so a seed can
-    // never overwrite or delete a real note.
-    const existing = await context.env.DB.prepare(
-      "SELECT id FROM notes WHERE title = ? AND title LIKE '[EVAL%'",
-    )
-      .bind(note.title)
-      .all<{ id: string }>();
-    for (const row of existing.results) {
-      await context.env.DB.prepare("DELETE FROM notes WHERE id = ? AND title LIKE '[EVAL%'")
-        .bind(row.id)
-        .run();
-      replaced += 1;
-    }
-
-    const id = newId();
-    const hash = await contentHash(note.title, note.body);
-    await context.env.DB.prepare(
-      `INSERT INTO notes(id, title, body, version, content_hash, created_at, updated_at, embedding_status)
-       VALUES (?, ?, ?, 1, ?, ?, ?, 'pending')`,
-    )
-      .bind(id, note.title, note.body, hash, now, now)
-      .run();
-    inserted += 1;
-    jobs.push({
-      type: "embed-note",
-      eventId: newId(),
-      noteId: id,
-      version: 1,
-      contentHash: hash,
-      createdAt: now,
-    });
-  }
-
-  let enqueued = 0;
-  if (enqueue) {
-    for (let offset = 0; offset < jobs.length; offset += 100) {
-      const batch = jobs.slice(offset, offset + 100);
-      try {
-        await context.env.INDEX_QUEUE.sendBatch(batch.map((job) => ({ body: job })));
-        enqueued += batch.length;
-      } catch (error) {
-        console.error("Search lab could not enqueue seed embeddings", context.requestId, error);
-        break;
-      }
-    }
-  }
-
-  return json({ action: "seed", inserted, replaced, enqueued });
+interface EvalArtifactRow {
+  id: string;
+  embedding_vector_id: string | null;
 }
 
-async function runCleanup(context: RequestContext, body: LabBody): Promise<Response> {
-  const rows = (await context.env.DB.prepare(
-    `SELECT id, embedding_vector_id FROM notes WHERE title LIKE '[EVAL%'`,
-  ).all<{ id: string; embedding_vector_id: string | null }>()).results;
+/**
+ * Stop live/queued AI Search maintenance before inspecting provider items.
+ * The sync path treats a live `disabled` note as a durable cleanup barrier and
+ * provider uploads use their own per-item lease, so a retry can safely wait for
+ * any operation that was already in flight.
+ */
+async function fenceEvalAiSearchArtifacts(
+  context: RequestContext,
+  rows: EvalArtifactRow[],
+): Promise<void> {
+  const noteIds = [...new Set(rows.map((row) => row.id))];
+  for (let offset = 0; offset < noteIds.length; offset += 40) {
+    const batch = noteIds.slice(offset, offset + 40);
+    if (batch.length === 0) continue;
+    await context.env.DB.prepare(
+      `UPDATE notes SET
+         ai_search_status = 'disabled', ai_search_indexed_content_hash = NULL,
+         ai_search_updated_at = ?, ai_search_error_code = NULL
+       WHERE id IN (${batch.map(() => "?").join(",")})
+         AND (
+           mutation_id LIKE '${EVAL_MUTATION_PREFIX}%'
+           OR title LIKE '[EVAL:%'
+         )`,
+    )
+      .bind(Date.now(), ...batch)
+      .run();
+  }
+}
 
-  // Chunk rows cascade away with the note, so their vector IDs must be read and
-  // deleted first; otherwise the vectors are orphaned inside Vectorize and keep
-  // consuming candidate slots at query time.
+async function deleteEvalAiSearchArtifacts(
+  context: RequestContext,
+  rows: EvalArtifactRow[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  let result: Awaited<ReturnType<typeof deleteAiSearchItemsForNotes>>;
+  try {
+    result = await deleteAiSearchItemsForNotes(
+      context.env,
+      rows.map((row) => row.id),
+    );
+  } catch (error) {
+    console.error("Search lab could not delete eval AI Search items", context.requestId, error);
+    throw new AppError(
+      503,
+      "LAB_AI_SEARCH_CLEANUP_FAILED",
+      "Evaluation AI Search items could not be removed safely; the notes were left intact.",
+    );
+  }
+  if (!result.complete) {
+    throw new AppError(
+      503,
+      "LAB_AI_SEARCH_CLEANUP_PENDING",
+      "Evaluation AI Search cleanup made bounded progress; retry before deleting the notes.",
+      {
+        deletedAiSearchItems: result.deletedItems,
+        remainingAiSearchItems: result.remainingItems,
+      },
+    );
+  }
+  return result.deletedItems;
+}
+
+/** Delete vectors before D1 cascades erase the IDs needed to address them. */
+async function deleteEvalVectorArtifacts(
+  context: RequestContext,
+  rows: EvalArtifactRow[],
+): Promise<{ deletedChunkVectors: number; deletedVectors: number }> {
   const chunkIds: string[] = [];
   for (let offset = 0; offset < rows.length; offset += 40) {
-    const batch = rows.slice(offset, offset + 40).map((row) => row.id);
-    if (batch.length === 0) continue;
+    const noteIds = rows.slice(offset, offset + 40).map((row) => row.id);
+    if (noteIds.length === 0) continue;
     const chunkRows = (await context.env.DB.prepare(
-      `SELECT chunk_id FROM note_chunks WHERE note_id IN (${batch.map(() => "?").join(",")})`,
+      `SELECT chunk_id FROM note_chunks WHERE note_id IN (${noteIds.map(() => "?").join(",")})`,
     )
-      .bind(...batch)
+      .bind(...noteIds)
       .all<{ chunk_id: string }>()).results;
     chunkIds.push(...chunkRows.map((row) => row.chunk_id));
   }
+
   let deletedChunkVectors = 0;
   for (let offset = 0; offset < chunkIds.length; offset += 100) {
     const batch = chunkIds.slice(offset, offset + 100);
@@ -740,7 +939,11 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
       deletedChunkVectors += batch.length;
     } catch (error) {
       console.error("Search lab could not delete eval chunk vectors", context.requestId, error);
-      break;
+      throw new AppError(
+        503,
+        "LAB_VECTOR_CLEANUP_FAILED",
+        "Evaluation vectors could not be removed safely; the notes were left intact.",
+      );
     }
   }
 
@@ -754,12 +957,188 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
       await context.env.VECTOR_INDEX.deleteByIds(batch);
       deletedVectors += batch.length;
     } catch (error) {
-      console.error("Search lab could not delete eval vectors", context.requestId, error);
-      break;
+      console.error("Search lab could not delete legacy eval vectors", context.requestId, error);
+      throw new AppError(
+        503,
+        "LAB_VECTOR_CLEANUP_FAILED",
+        "Evaluation vectors could not be removed safely; the notes were left intact.",
+      );
+    }
+  }
+  return { deletedChunkVectors, deletedVectors };
+}
+
+async function runSeed(context: RequestContext, body: LabBody): Promise<Response> {
+  const raw = body.notes;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SEED_NOTES) {
+    throw invalid(`notes must be an array of 1 to ${MAX_SEED_NOTES} objects.`);
+  }
+  const enqueue = body.enqueue !== false;
+  const maintainAiSearch = aiSearchConfig(context.env).enabled;
+
+  const parsed = raw.map((item, index) => {
+    const record = asRecord(item, `notes[${index}]`);
+    const title = record.title;
+    const noteBody = record.body ?? "";
+    const titleMatch = typeof title === "string" ? title.match(EVAL_INPUT_PATTERN) : null;
+    if (!titleMatch) {
+      throw invalid(`notes[${index}].title must start with "${EVAL_TITLE_PREFIX}<key>]".`);
+    }
+    const inputTitle = title as string;
+    const key = titleMatch[1];
+    const storedTitle = inputTitle.slice(titleMatch[0].length).trim();
+    if (storedTitle.length === 0 || storedTitle.length > 500) {
+      throw invalid(`notes[${index}].title content must contain 1 to 500 characters.`);
+    }
+    if (typeof noteBody !== "string" || noteBody.length > 200_000) {
+      throw invalid(`notes[${index}].body must be a string of at most 200000 characters.`);
+    }
+    return {
+      key,
+      inputTitle,
+      title: storedTitle,
+      body: noteBody,
+      mutationId: `${EVAL_MUTATION_PREFIX}${key}`,
+    };
+  });
+
+  const now = Date.now();
+  let inserted = 0;
+  let replaced = 0;
+  const vectorJobs: EmbedNoteJob[] = [];
+  const aiSearchJobs: SyncAiSearchNoteJob[] = [];
+
+  // Discover the entire replacement set before mutating anything. The strict
+  // provider helper owns one global 100-item budget per HTTP request; calling
+  // it once per input note would accidentally multiply that budget by as many
+  // as MAX_SEED_NOTES and could exceed Workers' internal-subrequest limit.
+  const existingById = new Map<string, EvalArtifactRow>();
+  for (const note of parsed) {
+    // The server-owned mutation namespace identifies lab rows without putting
+    // an English evaluation key into searchable title/body content.
+    const existing = await context.env.DB.prepare(
+      `SELECT id, embedding_vector_id FROM notes
+       WHERE mutation_id = ?
+          OR (title = ? AND title LIKE '[EVAL:%')`,
+    )
+      .bind(note.mutationId, note.inputTitle)
+      .all<EvalArtifactRow>();
+    for (const row of existing.results) existingById.set(row.id, row);
+  }
+
+  const existingRows = [...existingById.values()];
+  await fenceEvalAiSearchArtifacts(context, existingRows);
+  const deletedAiSearchItems = await deleteEvalAiSearchArtifacts(context, existingRows);
+  await deleteEvalVectorArtifacts(context, existingRows);
+  for (const row of existingRows) {
+    const result = await context.env.DB.prepare(
+      `DELETE FROM notes
+       WHERE id = ?
+         AND (
+           mutation_id LIKE '${EVAL_MUTATION_PREFIX}%'
+           OR title LIKE '[EVAL:%'
+         )`,
+    )
+      .bind(row.id)
+      .run();
+    replaced += result.meta.changes ?? 0;
+  }
+
+  for (const note of parsed) {
+    const id = newId();
+    const hash = await contentHash(note.title, note.body);
+    await context.env.DB.prepare(
+      `INSERT INTO notes(
+         id, title, body, version, content_hash, created_at, updated_at,
+         embedding_status, ai_search_status, mutation_id
+       ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+    )
+      // A non-enqueued sweep corpus must stay invisible to the periodic
+      // pending-note repair job. Otherwise a long calibration run can race the
+      // five-minute cron, write synthetic vectors into the production index,
+      // and leave orphans if cleanup deletes the note mid-job.
+      .bind(
+        id,
+        note.title,
+        note.body,
+        hash,
+        now,
+        now,
+        enqueue ? "pending" : "disabled",
+        enqueue && maintainAiSearch ? "pending" : "disabled",
+        note.mutationId,
+      )
+      .run();
+    inserted += 1;
+    vectorJobs.push({
+      type: "embed-note",
+      eventId: newId(),
+      noteId: id,
+      version: 1,
+      contentHash: hash,
+      createdAt: now,
+    });
+    if (maintainAiSearch) {
+      aiSearchJobs.push({
+        type: "sync-ai-search-note",
+        eventId: newId(),
+        noteId: id,
+        version: 1,
+        contentHash: hash,
+        createdAt: now,
+      });
     }
   }
 
-  const result = await context.env.DB.prepare("DELETE FROM notes WHERE title LIKE '[EVAL%'").run();
+  let vectorJobsEnqueued = 0;
+  let aiSearchJobsEnqueued = 0;
+  if (enqueue) {
+    vectorJobsEnqueued = await enqueueLabJobs(context, vectorJobs, "seed Vectorize");
+    aiSearchJobsEnqueued = await enqueueLabJobs(context, aiSearchJobs, "seed AI Search");
+  }
+
+  return json({
+    action: "seed",
+    inserted,
+    replaced,
+    // Preserve the original field for existing eval clients; the explicit
+    // fields below remove the ambiguity now that two independent indexes exist.
+    enqueued: vectorJobsEnqueued,
+    vectorJobsEnqueued,
+    aiSearchJobsEnqueued,
+    aiSearchEnabled: maintainAiSearch,
+    deletedAiSearchItems,
+  });
+}
+
+async function runCleanup(context: RequestContext, body: LabBody): Promise<Response> {
+  const rows = (await context.env.DB.prepare(
+    `SELECT id, embedding_vector_id FROM notes
+     WHERE mutation_id LIKE '${EVAL_MUTATION_PREFIX}%'
+        OR title LIKE '[EVAL:%'`,
+  ).all<EvalArtifactRow>()).results;
+
+  await fenceEvalAiSearchArtifacts(context, rows);
+  const deletedAiSearchItems = await deleteEvalAiSearchArtifacts(context, rows);
+  const { deletedChunkVectors, deletedVectors } = await deleteEvalVectorArtifacts(context, rows);
+
+  let deletedRows = 0;
+  // Delete only the rows whose provider mappings were inspected above. A
+  // predicate-only bulk delete could catch a concurrently seeded eval note and
+  // cascade away an item ID that this invocation never cleaned up.
+  for (const row of rows) {
+    const result = await context.env.DB.prepare(
+      `DELETE FROM notes
+       WHERE id = ?
+         AND (
+           mutation_id LIKE '${EVAL_MUTATION_PREFIX}%'
+           OR title LIKE '[EVAL:%'
+         )`,
+    )
+      .bind(row.id)
+      .run();
+    deletedRows += result.meta.changes ?? 0;
+  }
   let prunedCache = 0;
   if (body.pruneCache === true) {
     const cache = await context.env.DB.prepare("DELETE FROM lab_embedding_cache").run();
@@ -769,50 +1148,80 @@ async function runCleanup(context: RequestContext, body: LabBody): Promise<Respo
   return json({
     action: "cleanup",
     matchedNotes: rows.length,
-    deletedRows: result.meta.changes ?? 0,
+    deletedRows,
     deletedChunkVectors,
     deletedVectors,
+    deletedAiSearchItems,
     prunedCache,
   });
 }
 
+async function enqueueLabJobs(
+  context: RequestContext,
+  jobs: IndexJob[],
+  label: string,
+): Promise<number> {
+  let enqueued = 0;
+  for (let offset = 0; offset < jobs.length; offset += 100) {
+    const batch = jobs.slice(offset, offset + 100);
+    try {
+      await context.env.INDEX_QUEUE.sendBatch(batch.map((job) => ({ body: job })));
+      enqueued += batch.length;
+    } catch (error) {
+      console.error(`Search lab could not enqueue ${label} jobs`, context.requestId, error);
+      break;
+    }
+  }
+  return enqueued;
+}
+
 async function runReindex(context: RequestContext): Promise<Response> {
+  const maintainAiSearch = aiSearchConfig(context.env).enabled;
+  const aiSearchStatus = maintainAiSearch ? "pending" : "disabled";
   await context.env.DB.prepare(
-    `UPDATE notes SET embedding_status = 'pending', embedding_error_code = NULL
+    `UPDATE notes SET
+       embedding_status = 'pending', embedding_error_code = NULL,
+       ai_search_status = '${aiSearchStatus}', ai_search_indexed_content_hash = NULL,
+       ai_search_updated_at = NULL, ai_search_error_code = NULL
      WHERE deleted_at IS NULL`,
   ).run();
   const rows = (await context.env.DB.prepare(
     `SELECT id, version, content_hash FROM notes WHERE deleted_at IS NULL ORDER BY updated_at ASC LIMIT 500`,
   ).all<{ id: string; version: number; content_hash: string }>()).results;
 
-  let enqueued = 0;
-  for (let offset = 0; offset < rows.length; offset += 100) {
-    const batch = rows.slice(offset, offset + 100);
-    try {
-      await context.env.INDEX_QUEUE.sendBatch(
-        batch.map((row) => ({
-          body: {
-            type: "embed-note" as const,
-            eventId: newId(),
-            noteId: row.id,
-            version: row.version,
-            contentHash: row.content_hash,
-            createdAt: Date.now(),
-          },
-        })),
-      );
-      enqueued += batch.length;
-    } catch (error) {
-      console.error("Search lab could not enqueue reindex jobs", context.requestId, error);
-      break;
-    }
-  }
+  const createdAt = Date.now();
+  const vectorJobs: EmbedNoteJob[] = rows.map((row) => ({
+    type: "embed-note",
+    eventId: newId(),
+    noteId: row.id,
+    version: row.version,
+    contentHash: row.content_hash,
+    createdAt,
+  }));
+  const aiSearchJobs: SyncAiSearchNoteJob[] = maintainAiSearch
+    ? rows.map((row) => ({
+      type: "sync-ai-search-note",
+      eventId: newId(),
+      noteId: row.id,
+      version: row.version,
+      contentHash: row.content_hash,
+      createdAt,
+    }))
+    : [];
+  const vectorJobsEnqueued = await enqueueLabJobs(context, vectorJobs, "reindex Vectorize");
+  const aiSearchJobsEnqueued = await enqueueLabJobs(context, aiSearchJobs, "reindex AI Search");
 
-  return json({ action: "reindex", pendingNotes: rows.length, enqueued });
+  return json({
+    action: "reindex",
+    pendingNotes: rows.length,
+    enqueued: vectorJobsEnqueued,
+    vectorJobsEnqueued,
+    aiSearchJobsEnqueued,
+    aiSearchEnabled: maintainAiSearch,
+  });
 }
 
 async function runLive(context: RequestContext, body: LabBody): Promise<Response> {
-  const includeText = body.includeText === true;
   const queries = parseQueries(body);
   const baseConfig = semanticConfig(context.env);
   if (body.spanRefine !== undefined && typeof body.spanRefine !== "boolean") {
@@ -836,15 +1245,21 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
       retrieval.aggregation.notes,
       config.spanRefine,
     );
-    const noteIds = retrieval.aggregation.notes.map((note) => note.noteId);
-    const titles = new Map<string, string>();
-    if (includeText && noteIds.length > 0) {
+    const noteIds = [...new Set([
+      ...retrieval.hits.map((hit) => hit.noteId),
+      ...retrieval.aggregation.notes.map((note) => note.noteId),
+    ])];
+    const noteRefs = new Map<string, string>();
+    if (noteIds.length > 0) {
       const rows = (await context.env.DB.prepare(
-        `SELECT id, title FROM notes WHERE id IN (${noteIds.map(() => "?").join(",")})`,
+        `SELECT id, title, mutation_id FROM notes
+         WHERE id IN (${noteIds.map(() => "?").join(",")})`,
       )
         .bind(...noteIds)
-        .all<{ id: string; title: string }>()).results;
-      for (const row of rows) titles.set(row.id, row.title);
+        .all<{ id: string; title: string; mutation_id: string | null }>()).results;
+      await Promise.all(rows.map(async (row) => {
+        noteRefs.set(row.id, await anonymousNoteRef(row.id, row.title, row.mutation_id));
+      }));
     }
 
     reports.push({
@@ -865,6 +1280,9 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
       },
       candidateChunkCount: retrieval.indexedCandidateCount,
       resolvedChunkCount: retrieval.resolvedCandidateCount,
+      expandedCandidateChunkCount: retrieval.expandedIndexedCandidateCount,
+      expandedResolvedChunkCount: retrieval.expandedResolvedCandidateCount,
+      shortQueryRescue: retrieval.shortQueryRescue,
       pendingNoteCount: retrieval.pendingNoteCount,
       pendingNotesScored: retrieval.pendingNotesScored,
       topChunkScore: retrieval.aggregation.topChunkScore,
@@ -874,11 +1292,9 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
       rankedChunks: retrieval.hits
         .slice()
         .sort((left, right) => right.score - left.score)
-        .slice(0, 20)
+        .slice(0, 40)
         .map((hit) => ({
-          noteRef: hit.noteId.slice(0, 8),
-          noteId: includeText ? hit.noteId : undefined,
-          title: includeText ? titles.get(hit.noteId) : undefined,
+          noteRef: noteRefs.get(hit.noteId) ?? "unknown",
           kind: hit.kind,
           lineNumber: hit.primaryLine,
           lineStart: hit.lineStart,
@@ -886,13 +1302,10 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
           charStart: hit.charStart,
           charEnd: hit.charEnd,
           score: hit.score,
-          text: includeText ? hit.text : undefined,
         })),
       results: retrieval.aggregation.notes.map((note, rank) => ({
         rank: rank + 1,
-        noteRef: note.noteId.slice(0, 8),
-        noteId: includeText ? note.noteId : undefined,
-        title: includeText ? titles.get(note.noteId) : undefined,
+        noteRef: noteRefs.get(note.noteId) ?? "unknown",
         score: note.score,
         bestScore: note.bestScore,
         matchedChunkCount: note.matchedChunkCount,
@@ -904,7 +1317,6 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
           charStart: match.charStart,
           charEnd: match.charEnd,
           score: match.score,
-          text: includeText ? match.text : undefined,
         })),
       })),
     });
@@ -912,7 +1324,9 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
 
   return json({
     action: "live",
-    includeText,
+    privacyMode: "anonymous-only",
+    backend: "legacy-vectorize",
+    productionHandler: false,
     embeddingModel: config.spec.id,
     embeddingDimensions: config.spec.dimensions,
     chunking: config.chunking,
@@ -927,7 +1341,6 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
  * clients consume is verified rather than just the retrieval internals.
  */
 async function runApi(context: RequestContext, body: LabBody): Promise<Response> {
-  const includeText = body.includeText === true;
   const queries = parseQueries(body);
   const fallbackOnly = body.fallbackOnly !== false;
   const reports = [];
@@ -955,53 +1368,75 @@ async function runApi(context: RequestContext, body: LabBody): Promise<Response>
     const payload = await response.json() as Record<string, unknown>;
     const results = Array.isArray(payload.results) ? payload.results : [];
 
+    const sanitizedResults = await Promise.all(results.map(async (item) => {
+      const record = item as Record<string, unknown>;
+      const matches = Array.isArray(record.matches) ? record.matches : [];
+      const noteBody = typeof record.body === "string" ? record.body : "";
+      const noteId = typeof record.id === "string" ? record.id : "";
+      const title = typeof record.title === "string" ? record.title : "";
+      // The normal API response has no mutation metadata. Resolve it only for
+      // synthetic eval notes so the harness can map anonymous results.
+      const metadata = noteId.length === 0
+        ? null
+        : await context.env.DB.prepare(
+          "SELECT mutation_id FROM notes WHERE id = ?",
+        ).bind(noteId).first<{ mutation_id: string | null }>();
+      return {
+        noteRef: noteId.length === 0
+          ? "unknown"
+          : await anonymousNoteRef(noteId, title, metadata?.mutation_id),
+        score: record.score,
+        matchType: record.matchType,
+        matches: matches.map((value) => {
+          const match = value as Record<string, unknown>;
+          const charStart = typeof match.charStart === "number" ? match.charStart : null;
+          const charEnd = typeof match.charEnd === "number" ? match.charEnd : null;
+          const slice = charStart !== null && charEnd !== null
+            ? noteBody.slice(charStart, charEnd)
+            : null;
+          return {
+            kind: match.kind,
+            lineNumber: match.lineNumber,
+            rawLineIndex: match.rawLineIndex,
+            charStart,
+            charEnd,
+            score: match.score,
+            // Proves offsets address the same text without returning either.
+            offsetsMatchText: slice === null ? null : slice === match.text,
+          };
+        }),
+      };
+    }));
+
     reports.push({
       query,
       status: response.status,
       elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
       serverTiming: response.headers.get("server-timing"),
       strategy: payload.strategy,
+      backend: payload.backend,
+      rankingStrategy: payload.rankingStrategy,
       semanticSkipped: payload.semanticSkipped ?? false,
       effectiveFloor: payload.effectiveFloor,
       topChunkScore: payload.topChunkScore,
       candidateChunkCount: payload.candidateChunkCount,
+      candidateItemCount: payload.candidateItemCount,
+      resolvedItemCount: payload.resolvedItemCount,
+      matchedNoteCount: payload.matchedNoteCount,
       pendingIndexCount: payload.pendingIndexCount,
-      results: results.map((item) => {
-        const record = item as Record<string, unknown>;
-        const matches = Array.isArray(record.matches) ? record.matches : [];
-        const noteBody = typeof record.body === "string" ? record.body : "";
-        return {
-          noteRef: String(record.id ?? "").slice(0, 8),
-          noteId: includeText ? record.id : undefined,
-          title: includeText ? record.title : undefined,
-          score: record.score,
-          matchType: record.matchType,
-          bodyLength: noteBody.length,
-          matches: matches.map((value) => {
-            const match = value as Record<string, unknown>;
-            const charStart = typeof match.charStart === "number" ? match.charStart : null;
-            const charEnd = typeof match.charEnd === "number" ? match.charEnd : null;
-            const slice = charStart !== null && charEnd !== null
-              ? noteBody.slice(charStart, charEnd)
-              : null;
-            return {
-              kind: match.kind,
-              lineNumber: match.lineNumber,
-              rawLineIndex: match.rawLineIndex,
-              charStart,
-              charEnd,
-              score: match.score,
-              // Proves the offsets address the same text the client will render.
-              offsetsMatchText: slice === null ? null : slice === match.text,
-              text: includeText ? match.text : undefined,
-            };
-          }),
-        };
-      }),
+      translation: payload.translation && typeof payload.translation === "object"
+        ? {
+          enabled: (payload.translation as Record<string, unknown>).enabled === true,
+          attempted: (payload.translation as Record<string, unknown>).attempted === true,
+          applied: (payload.translation as Record<string, unknown>).applied === true,
+          failed: (payload.translation as Record<string, unknown>).failed === true,
+        }
+        : null,
+      results: sanitizedResults,
     });
   }
 
-  return json({ action: "api", includeText, fallbackOnly, queries: reports });
+  return json({ action: "api", privacyMode: "anonymous-only", fallbackOnly, queries: reports });
 }
 
 async function runPruneVectors(context: RequestContext, body: LabBody): Promise<Response> {
@@ -1040,8 +1475,19 @@ export async function searchLab(context: RequestContext): Promise<Response> {
   );
   const actor = await authorizeLab(context);
   const body = await readJson<LabBody>(context.request);
+  if (body.includeText === true) {
+    throw invalid("includeText is not supported; search-lab responses are anonymous-only.");
+  }
   const action = body.action === undefined ? "sweep" : body.action;
   if (typeof action !== "string") throw invalid("action must be a string.");
+  if (
+    actor === "device" &&
+    !["live", "api", "corpus-stats", "whoami"].includes(action)
+  ) {
+    // Preserve the masked surface when a paired device attempts a calibration
+    // or mutation action reserved for the dedicated operator token.
+    throw notFound();
+  }
 
   switch (action) {
     case "sweep":

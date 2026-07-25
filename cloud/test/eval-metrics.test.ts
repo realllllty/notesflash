@@ -85,6 +85,54 @@ describe("evaluateQuery", () => {
     });
   });
 
+  it("maps anonymous eval refs without requiring a returned title or note ID", () => {
+    const anonymous = result("migrate-en", 1, 0.72, [3]);
+    delete (anonymous as { noteId?: string }).noteId;
+    delete (anonymous as { title?: string }).title;
+    anonymous.noteRef = "migrate-en";
+    const row = evaluateQuery({ golden, results: [anonymous], corpus });
+    expect(row).toMatchObject({ rank: 1, lineHit: true });
+  });
+
+  it("calibrates against raw Top-40 competitors hidden by result thresholds", () => {
+    const row = evaluateQuery({
+      golden,
+      results: [result("migrate-en", 1, 0.6, [3])],
+      rankedChunks: [
+        {
+          noteRef: "migrate-en",
+          kind: "body",
+          lineNumber: 1,
+          lineStart: 1,
+          lineEnd: 1,
+          score: 0.8,
+        },
+        {
+          noteRef: "migrate-en",
+          kind: "body",
+          lineNumber: 3,
+          lineStart: 3,
+          lineEnd: 3,
+          score: 0.6,
+        },
+        {
+          noteRef: "lunch",
+          kind: "body",
+          lineNumber: 1,
+          lineStart: 1,
+          lineEnd: 1,
+          score: 0.29,
+        },
+      ],
+      corpus,
+    });
+
+    expect(row.expectedCandidateScore).toBeCloseTo(0.6, 12);
+    expect(row.bestNegativeScore).toBeCloseTo(0.29, 12);
+    // Wrong-line competition inside the expected note must also be visible.
+    expect(row.bestCompetingCandidateScore).toBeCloseTo(0.8, 12);
+  });
+
   it("detects a note hit with the wrong line", () => {
     const row = evaluateQuery({
       golden,
@@ -105,10 +153,38 @@ describe("evaluateQuery", () => {
     expect(row.lineHit).toBe(true);
   });
 
+  it("checks every acceptable line when one note has multiple expectations", () => {
+    const multipleLines = {
+      query: "migration detail",
+      scenario: "multiple-acceptable-lines",
+      expect: [
+        { key: "migrate-en", lineIncludes: "Owner: platform team" },
+        { key: "migrate-en", lineIncludes: "migrate the legacy notes" },
+      ],
+    };
+    const row = evaluateQuery({
+      golden: multipleLines,
+      results: [result("migrate-en", 1, 0.7, [3])],
+      corpus,
+    });
+
+    expect(row.lineHit).toBe(true);
+    expect(row.lineHitAt1).toBe(true);
+    expect(row.expectedLine).toBe(3);
+  });
+
   it("reports a miss and the strongest wrong note", () => {
     const row = evaluateQuery({
       golden,
       results: [result("lunch", 1, 0.55, [1])],
+      rankedChunks: [{
+        noteRef: "lunch",
+        kind: "body",
+        lineNumber: 1,
+        lineStart: 1,
+        lineEnd: 1,
+        score: 0.55,
+      }],
       corpus,
     });
 
@@ -146,13 +222,54 @@ describe("evaluateQuery", () => {
     });
     expect(row.corpusLineMissing).toBe("gone");
   });
+
+  it("does not let a captured list prove its own candidate completeness", () => {
+    const rankedChunks = Array.from({ length: 40 }, (_, index) => ({
+      noteRef: "lunch",
+      kind: "body",
+      lineNumber: 1,
+      lineStart: 1,
+      lineEnd: 1,
+      score: 1 - index / 100,
+    }));
+    const negative = { query: "q", scenario: "negative", expect: [] };
+
+    const unproven = evaluateQuery({
+      golden: negative,
+      results: [],
+      rankedChunks,
+      candidateCaptureLimit: 40,
+      corpus,
+    });
+    expect(unproven.candidateCaptureComplete).toBe(false);
+
+    const proven = evaluateQuery({
+      golden: negative,
+      results: [],
+      rankedChunks,
+      candidateUniverseSize: 52,
+      candidateCaptureLimit: 40,
+      corpus,
+    });
+    expect(proven.candidateCaptureTarget).toBe(40);
+    expect(proven.candidateCaptureComplete).toBe(true);
+
+    const undeclaredDepth = evaluateQuery({
+      golden: negative,
+      results: [],
+      rankedChunks,
+      candidateUniverseSize: 52,
+      corpus,
+    });
+    expect(undeclaredDepth.candidateCaptureComplete).toBe(false);
+  });
 });
 
 describe("summarize", () => {
   const rows = [
-    { negative: false, scenario: "a", rank: 1, reciprocalRank: 1, lineHit: true, expectedScore: 0.7, bestNegativeScore: 0.4, unfilteredTopScore: 0.7 },
-    { negative: false, scenario: "a", rank: 4, reciprocalRank: 0.25, lineHit: false, expectedScore: 0.55, bestNegativeScore: 0.6, unfilteredTopScore: 0.6 },
-    { negative: false, scenario: "b", rank: null, reciprocalRank: 0, lineHit: null, expectedScore: null, bestNegativeScore: 0.5, unfilteredTopScore: 0.5 },
+    { negative: false, scenario: "a", rank: 1, reciprocalRank: 1, lineHit: true, expectedScore: 0.7, expectedCandidateScore: 0.7, bestNegativeScore: 0.4, unfilteredTopScore: 0.7 },
+    { negative: false, scenario: "a", rank: 4, reciprocalRank: 0.25, lineHit: false, expectedScore: 0.55, expectedCandidateScore: 0.55, bestNegativeScore: 0.6, unfilteredTopScore: 0.6 },
+    { negative: false, scenario: "b", rank: null, reciprocalRank: 0, lineHit: null, expectedScore: null, expectedCandidateScore: null, bestNegativeScore: 0.5, unfilteredTopScore: 0.5 },
     { negative: true, scenario: "negative", rank: null, reciprocalRank: 0, lineHit: null, falsePositive: true, unfilteredTopScore: 0.45, bestNegativeScore: null },
     { negative: true, scenario: "negative", rank: null, reciprocalRank: 0, lineHit: null, falsePositive: false, unfilteredTopScore: 0.3, bestNegativeScore: null },
   ];
@@ -165,9 +282,28 @@ describe("summarize", () => {
     expect(summary.recall8).toBeCloseTo(2 / 3, 12);
     expect(summary.mrr).toBeCloseTo((1 + 0.25 + 0) / 3, 12);
     expect(summary.lineAccuracy).toBeCloseTo(0.5, 12);
+    expect(summary.conditionalLineAccuracy).toBeCloseTo(0.5, 12);
     expect(summary.negativeClean).toBeCloseTo(0.5, 12);
     expect(summary.minPositiveScore).toBeCloseTo(0.55, 12);
     expect(summary.maxNegativeScore).toBeCloseTo(0.6, 12);
+  });
+
+  it("does not treat an expected-note wrong-line score as positive evidence", () => {
+    const summary = summarize([
+      {
+        negative: false,
+        scenario: "wrong-line",
+        rank: 1,
+        reciprocalRank: 1,
+        lineHit: false,
+        expectedScore: 0.92,
+        expectedCandidateScore: null,
+        bestNegativeScore: 0.4,
+        unfilteredTopScore: 0.92,
+      },
+    ]);
+
+    expect(summary.minPositiveScore).toBeNull();
   });
 
   it("groups rows by scenario", () => {

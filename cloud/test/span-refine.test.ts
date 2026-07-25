@@ -113,6 +113,8 @@ describe("refineSpans", () => {
     );
     // The anchor line follows the refined span.
     expect(target.primaryLine).toBe(2);
+    expect(target.lineStart).toBe(2);
+    expect(target.lineEnd).toBe(2);
   });
 
   it("keeps the chunk when no sub-span holds the score", async () => {

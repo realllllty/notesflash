@@ -1,4 +1,10 @@
 import { buildIdentifiedNoteChunks } from "./chunking";
+import {
+  markAiSearchJobFailed,
+  syncAiSearchNote,
+  verifyAiSearchNote,
+} from "./ai-search-index";
+import { aiSearchConfig } from "./ai-search";
 import { newId } from "./crypto";
 import { embedTexts } from "./embedding-models";
 import { AppError } from "./http";
@@ -211,6 +217,14 @@ async function processDeleteChunksJob(env: Env, job: DeleteChunksJob): Promise<v
 }
 
 async function processJob(env: Env, job: IndexJob): Promise<void> {
+  if (job.type === "sync-ai-search-note") {
+    await syncAiSearchNote(env, job);
+    return;
+  }
+  if (job.type === "verify-ai-search-note") {
+    await verifyAiSearchNote(env, job);
+    return;
+  }
   if (job.type === "delete-chunks") {
     await processDeleteChunksJob(env, job);
     return;
@@ -254,21 +268,101 @@ export async function consumeIndexQueue(batch: MessageBatch<IndexJob>, env: Env)
       message.ack();
     } catch (error) {
       console.error("Index queue job failed", message.id, error);
-      if (message.body.type === "embed-note") {
-        await env.DB.prepare(
-          `UPDATE notes SET embedding_status = 'failed', embedding_error_code = ?
-           WHERE id = ? AND version = ? AND content_hash = ?`,
-        )
-          .bind(
-            embeddingErrorCode(error),
-            message.body.noteId,
-            message.body.version,
-            message.body.contentHash,
+      try {
+        if (message.body.type === "embed-note") {
+          await env.DB.prepare(
+            `UPDATE notes SET embedding_status = 'failed', embedding_error_code = ?
+             WHERE id = ? AND version = ? AND content_hash = ?`,
           )
-          .run();
+            .bind(
+              embeddingErrorCode(error),
+              message.body.noteId,
+              message.body.version,
+              message.body.contentHash,
+            )
+            .run();
+        } else if (
+          message.body.type === "sync-ai-search-note" ||
+          message.body.type === "verify-ai-search-note"
+        ) {
+          await markAiSearchJobFailed(env, message.body, error);
+        }
+      } catch (statusError) {
+        // A D1 status-write outage must not acknowledge and lose the original
+        // provider job. Scheduled repair can reconstruct status later.
+        console.error("Could not record failed index job", message.id, statusError);
       }
-      message.retry();
+      if (
+        message.body.type === "sync-ai-search-note" ||
+        message.body.type === "verify-ai-search-note"
+      ) message.retry({ delaySeconds: 15 });
+      else message.retry();
     }
+  }
+}
+
+async function retryPendingAiSearchIndexes(env: Env, staleBefore: number): Promise<void> {
+  const aiConfig = aiSearchConfig(env);
+
+  // Deleted rows may still own provider items from a previously enabled AI
+  // Search backend. Always repair those cleanup jobs so disabling maintenance
+  // cannot permanently block retention hard-delete.
+  const deletedAiRows = (await env.DB.prepare(
+    `SELECT DISTINCT n.id, n.version, n.content_hash
+     FROM notes n
+     LEFT JOIN ai_search_items a ON a.note_id = n.id
+     WHERE n.deleted_at IS NOT NULL
+       AND (n.ai_search_status != 'disabled' OR a.note_id IS NOT NULL)
+     ORDER BY n.deleted_at ASC
+     LIMIT 100`,
+  ).all<Pick<NoteRow, "id" | "version" | "content_hash">>()).results;
+  const liveAiRows = aiConfig.enabled
+    ? (await env.DB.prepare(
+      `SELECT id, version, content_hash FROM notes
+       WHERE deleted_at IS NULL
+         AND (
+           ai_search_status = 'pending'
+           OR (ai_search_status = 'failed' AND COALESCE(ai_search_updated_at, 0) < ?)
+           OR (ai_search_status = 'processing' AND COALESCE(ai_search_updated_at, 0) < ?)
+           OR (
+             ai_search_status = 'ready'
+             AND (
+               ai_search_indexed_content_hash IS NULL
+               OR ai_search_indexed_content_hash != content_hash
+               OR NOT EXISTS (
+                 SELECT 1 FROM ai_search_items a
+                 WHERE a.note_id = notes.id
+                   AND a.note_content_hash = notes.content_hash
+                   AND a.sync_state = 'ready'
+               )
+               OR EXISTS (
+                 SELECT 1 FROM ai_search_items a
+                 WHERE a.note_id = notes.id
+                   AND a.note_content_hash = notes.content_hash
+                   AND a.sync_state != 'ready'
+               )
+             )
+           )
+         )
+       ORDER BY updated_at ASC
+       LIMIT 500`,
+    )
+      .bind(staleBefore, staleBefore)
+      .all<Pick<NoteRow, "id" | "version" | "content_hash">>()).results
+    : [];
+  const repairRows = [...deletedAiRows, ...liveAiRows];
+  for (let offset = 0; offset < repairRows.length; offset += 100) {
+    const rows = repairRows.slice(offset, offset + 100);
+    await env.INDEX_QUEUE.sendBatch(rows.map((note) => ({
+      body: {
+        type: "sync-ai-search-note" as const,
+        eventId: newId(),
+        noteId: note.id,
+        version: note.version,
+        contentHash: note.content_hash,
+        createdAt: Date.now(),
+      },
+    })));
   }
 }
 
@@ -310,6 +404,7 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
        AND deleted_at < ?
        AND embedding_vector_id IS NULL
        AND NOT EXISTS (SELECT 1 FROM note_chunks c WHERE c.note_id = notes.id)
+       AND NOT EXISTS (SELECT 1 FROM ai_search_items a WHERE a.note_id = notes.id)
      ORDER BY deleted_at ASC
      LIMIT 20`,
   )
@@ -460,7 +555,6 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
     .bind(staleBefore, staleBefore, currentModel)
     .all<Pick<NoteRow, "id" | "version" | "content_hash">>();
 
-  if (result.results.length === 0) return;
   // Queue sendBatch accepts at most 100 messages. Selecting only identifiers
   // above keeps a large repair pass cheap even when note bodies are large.
   for (let offset = 0; offset < result.results.length; offset += 100) {
@@ -477,5 +571,14 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
         },
       })),
     );
+  }
+
+  // Run the optional provider repair only after Vectorize messages have been
+  // accepted. A slow/misconfigured AI Search account can therefore neither
+  // fail nor starve the existing semantic fallback's scheduled recovery.
+  try {
+    await retryPendingAiSearchIndexes(env, staleBefore);
+  } catch (error) {
+    console.error("Could not repair AI Search indexes", error);
   }
 }

@@ -1,9 +1,9 @@
 /**
  * Multilingual embedding models available on Workers AI.
  *
- * Cross-language recall is handled entirely by the embedding space: the query
- * is embedded once and compared against line-level chunk vectors. Workers AI
- * ships exactly one reranker (`@cf/baai/bge-reranker-base`) whose cross-lingual
+ * Cross-language recall is handled entirely by the embedding space: query
+ * views are embedded in one batch and compared against line-level chunks.
+ * Workers AI ships exactly one reranker (`@cf/baai/bge-reranker-base`) whose cross-lingual
  * scores collapse into the noise band, so it is never the primary ranker here.
  *
  * Each model wants a slightly different input shape, and Workers AI responses
@@ -66,11 +66,7 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
   },
 };
 
-/**
- * Calibrated against `cloud/eval`: EmbeddingGemma reached R@1 93% / R@3 100%
- * with 100% line accuracy and the widest positive/negative score gap of the
- * models Workers AI offers, at roughly a third of Qwen3's query latency.
- */
+/** Current deployed default; model changes require a fresh, leakage-free eval. */
 export const DEFAULT_EMBEDDING_MODEL = "@cf/google/embeddinggemma-300m";
 
 export function embeddingModelSpec(id: string | undefined): EmbeddingModelSpec {

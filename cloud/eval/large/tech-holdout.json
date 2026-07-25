@@ -1,0 +1,245 @@
+{
+  "name": "tech-large-holdout-v1",
+  "frozen": true,
+  "comment": "Forty frozen queries. Do not use this file for model, prompt, chunk, threshold, or fallback tuning; run it only after choices are fixed on tech-calibration.json.",
+  "queries": [
+    {
+      "query": "resolver cache duration",
+      "scenario": "short-technical-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-049", "lineIncludes": "Lower the record lifetime a full day before moving the service" }]
+    },
+    {
+      "query": "域名迁移前为什么要提前降低解析缓存时长",
+      "scenario": "short-technical-context-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-049", "lineIncludes": "Lower the record lifetime a full day before moving the service" }]
+    },
+    {
+      "query": "certificate replacement cycle",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-050", "lineIncludes": "到期前二十一天由定时任务申请新证书" }]
+    },
+    {
+      "query": "how early should automation replace a TLS certificate",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-050", "lineIncludes": "到期前二十一天由定时任务申请新证书" }]
+    },
+    {
+      "query": "flags",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-052", "lineIncludes": "高风险能力默认关闭，并按租户逐步启用" }]
+    },
+    {
+      "query": "how can one tenant receive a risky feature first",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-052", "lineIncludes": "高风险能力默认关闭，并按租户逐步启用" }]
+    },
+    {
+      "query": "溯源",
+      "scenario": "short-zh-to-en-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-053", "lineIncludes": "attestation records the source revision and exact build workflow" }]
+    },
+    {
+      "query": "如何确认发布包来自指定源码和流水线",
+      "scenario": "short-zh-to-en-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-053", "lineIncludes": "attestation records the source revision and exact build workflow" }]
+    },
+    {
+      "query": "flaky",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-056", "lineIncludes": "连续一周出现三次后转入隔离队列" }]
+    },
+    {
+      "query": "when should an intermittent test be quarantined",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-056", "lineIncludes": "连续一周出现三次后转入隔离队列" }]
+    },
+    {
+      "query": "怎样让旧实例下线时不丢正在处理的请求",
+      "scenario": "release-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-051", "lineIncludes": "Allow in-flight requests to finish during the drain period" }]
+    },
+    {
+      "query": "what should invalidate a dependency cache after the runtime changes",
+      "scenario": "devops-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-054", "lineIncludes": "依赖缓存的键包含锁文件摘要和运行时版本" }]
+    },
+    {
+      "query": "只运行受改动影响的项目时还要测哪些下游",
+      "scenario": "devops-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-055", "lineIncludes": "consumers that depend on its public API" }]
+    },
+    {
+      "query": "消息五次投递仍失败会去哪",
+      "scenario": "queue-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-059", "lineIncludes": "Messages move aside after five failed deliveries" }]
+    },
+    {
+      "query": "what stops a redelivered event from performing the business action twice",
+      "scenario": "long-note-needle-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-060", "lineIncludes": "已经成功的标识再次到达时直接确认，不重复执行业务动作" }]
+    },
+    {
+      "query": "队列消费端怎样接上生产端的调用链",
+      "scenario": "observability-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-061", "lineIncludes": "start a linked span rather than an unrelated trace" }]
+    },
+    {
+      "query": "which percentile views belong on the main latency dashboard",
+      "scenario": "observability-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-062", "lineIncludes": "主看板展示第五十、九十五和九十九分位" }]
+    },
+    {
+      "query": "怎样减少短暂尖峰造成的误叫醒",
+      "scenario": "observability-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-063", "lineIncludes": "slower window confirms the condition before paging" }]
+    },
+    {
+      "query": "what should a consumer do when unfinished work starts accumulating",
+      "scenario": "queue-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-068", "lineIncludes": "根据未完成任务数暂停读取" }]
+    },
+    {
+      "query": "database text changed but search still shows old wording",
+      "scenario": "search-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-076", "lineIncludes": "数据库行已更新但索引版本没变化时，搜索可能返回旧内容" }]
+    },
+    {
+      "query": "during a network partition why must two regions not both become writers",
+      "scenario": "long-note-needle-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-080", "lineIncludes": "不要在网络分区期间同时提升两个写入主节点" }]
+    },
+    {
+      "query": "为什么字符命中应该先于语义请求",
+      "scenario": "search-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-081", "lineIncludes": "because it is immediate and deterministic" }]
+    },
+    {
+      "query": "what should search return if the model provider is down",
+      "scenario": "search-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-082", "lineIncludes": "模型失败时返回空结果而不是阻塞快速创建" }]
+    },
+    {
+      "query": "哪种模型会联合读取原始问题和候选片段再打分",
+      "scenario": "search-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-083", "lineIncludes": "reads the original query together with each candidate passage" }]
+    },
+    {
+      "query": "how can two query views rescue a short term without accepting one-sided noise",
+      "scenario": "search-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-084", "lineIncludes": "原始视角和扩展视角必须命中同一分块才允许救回" }]
+    },
+    {
+      "query": "文档向量输入应该怎样传真实标题",
+      "scenario": "search-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-085", "lineIncludes": "actual note title through the model's dedicated title field" }]
+    },
+    {
+      "query": "what happens if an English evaluation identifier is embedded into a Chinese heading",
+      "scenario": "long-note-needle-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-096", "lineIncludes": "跨语言得分会被虚假抬高" }]
+    },
+    {
+      "query": "编辑后不用保存按钮何时写入",
+      "scenario": "product-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-101", "lineIncludes": "after a short idle interval rather than showing a save button" }]
+    },
+    {
+      "query": "what happens when the clipboard contains a picture",
+      "scenario": "product-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-102", "lineIncludes": "直接插入当前光标所在行" }]
+    },
+    {
+      "query": "卡片左滑后怎样确认删除而不用浏览器弹窗",
+      "scenario": "product-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-103", "lineIncludes": "in-app confirmation sheet instead of a browser dialog" }],
+      "forbid": ["tech-104"]
+    },
+    {
+      "query": "中文输入法组合期间按回车为什么不能新建笔记",
+      "scenario": "product-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-109", "lineIncludes": "Ignore Enter while the browser reports an active text composition" }]
+    },
+    {
+      "query": "what happens when my local draft is based on an older revision",
+      "scenario": "product-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-112", "lineIncludes": "客户端保留本地草稿，不直接覆盖远端修改" }]
+    },
+    {
+      "query": "time to live of a radioactive isotope",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-049"]
+    },
+    {
+      "query": "renew a passport before international travel",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-050"]
+    },
+    {
+      "query": "national flag protocol at a ceremony",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-052"]
+    },
+    {
+      "query": "trace the provenance of a family heirloom",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-053"]
+    },
+    {
+      "query": "flaky pastry lamination recipe",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-056"]
+    },
+    {
+      "query": "BGP route reflector topology",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "homomorphic encryption query planning",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "robot arm inverse kinematics calibration",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    }
+  ]
+}

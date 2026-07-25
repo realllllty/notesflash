@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   aggregateChunkHits,
+  appendShortQueryConsensus,
   cosineSimilarity,
   DEFAULT_AGGREGATION,
   resolveAggregationOptions,
@@ -130,6 +131,162 @@ describe("aggregateChunkHits", () => {
     expect(result.notes).toHaveLength(0);
     expect(result.topChunkScore).toBeNull();
     expect(result.effectiveFloor).toBeCloseTo(0.4, 12);
+  });
+
+  it("does not raise a relative floor above a negative best score", () => {
+    const result = aggregateChunkHits(
+      [hit("best-negative", 0, -0.2), hit("weaker-negative", 0, -0.7)],
+      {
+        ...options,
+        minCosine: -1,
+        relativeMinRatio: 0.6,
+      },
+    );
+
+    expect(result.effectiveFloor).toBe(-1);
+    expect(result.notes.map((note) => note.noteId)).toEqual([
+      "best-negative",
+      "weaker-negative",
+    ]);
+  });
+});
+
+describe("appendShortQueryConsensus", () => {
+  const primaryOptions: AggregationOptions = {
+    ...DEFAULT_AGGREGATION,
+    topK: 8,
+  };
+  const rescueOptions = {
+    rawMinCosine: 0.235,
+    expandedMinCosine: 0.3,
+    relativeMinRatio: 0.6,
+    maxMatchesPerNote: 3,
+    topK: 8,
+  };
+
+  it("rescues entry-like cross-language chunks only when both views agree", () => {
+    const raw = [
+      hit("strong", 0, 0.333),
+      hit("entrance-zh", 0, 0.252),
+      hit("raw-noise", 0, 0.23),
+    ];
+    const expanded = [
+      hit("expanded-noise", 0, 0.35),
+      hit("entrance-zh", 0, 0.322),
+      hit("raw-noise", 0, 0.34),
+    ];
+    const primary = aggregateChunkHits(raw, primaryOptions);
+    const result = appendShortQueryConsensus(primary, raw, expanded, rescueOptions);
+
+    expect(result.aggregation.notes.map((note) => note.noteId)).toEqual([
+      "strong",
+      "entrance-zh",
+    ]);
+    expect(result.aggregation.notes[1].bestScore).toBeCloseTo(0.252, 6);
+    expect(result.diagnostics).toMatchObject({
+      consensusChunkCount: 1,
+      candidateNoteCount: 1,
+      addedNoteCount: 1,
+    });
+    expect(result.diagnostics.rawFloor).toBeCloseTo(0.235, 6);
+    expect(result.diagnostics.expandedFloor).toBeCloseTo(0.3, 6);
+  });
+
+  it("rejects raw-only, expanded-only, and different-anchor evidence", () => {
+    const raw = [
+      hit("raw-only", 0, 0.25),
+      hit("below-raw-gate", 0, 0.23),
+      hit("different-anchor", 0, 0.26),
+    ];
+    const expanded = [
+      hit("expanded-only", 0, 0.9),
+      hit("below-raw-gate", 0, 0.9),
+      // Same note is insufficient: consensus is deliberately keyed by chunk.
+      hit("different-anchor", 1, 0.9),
+    ];
+    const result = appendShortQueryConsensus(
+      aggregateChunkHits(raw, primaryOptions),
+      raw,
+      expanded,
+      rescueOptions,
+    );
+
+    expect(result.aggregation.notes).toEqual([]);
+    expect(result.diagnostics.consensusChunkCount).toBe(0);
+  });
+
+  it("keeps primary note order and score while appending a rescued line", () => {
+    const raw = [
+      hit("primary-a", 0, 0.42, 1),
+      hit("primary-b", 0, 0.38, 1),
+      hit("primary-a", 1, 0.27, 2),
+      hit("rescued-c", 0, 0.265, 4),
+    ];
+    const expanded = [
+      hit("primary-a", 1, 0.34, 2),
+      hit("rescued-c", 0, 0.33, 4),
+    ];
+    const primary = aggregateChunkHits(raw, primaryOptions);
+    const originalOrder = primary.notes.map((note) => note.noteId);
+    const originalScore = primary.notes[0].bestScore;
+    const result = appendShortQueryConsensus(primary, raw, expanded, rescueOptions);
+
+    expect(result.aggregation.notes.map((note) => note.noteId)).toEqual([
+      ...originalOrder,
+      "rescued-c",
+    ]);
+    expect(result.aggregation.notes[0].bestScore).toBe(originalScore);
+    expect(result.aggregation.notes[0].matches.map((match) => match.primaryLine)).toEqual([1, 2]);
+    expect(result.diagnostics).toMatchObject({ addedNoteCount: 1, enrichedNoteCount: 1 });
+  });
+
+  it("keeps the relative floor so a weak tail cannot be rescued behind a strong hit", () => {
+    const raw = [hit("strong", 0, 0.8), hit("weak", 0, 0.25)];
+    const expanded = [hit("weak", 0, 0.9)];
+    const result = appendShortQueryConsensus(
+      aggregateChunkHits(raw, primaryOptions),
+      raw,
+      expanded,
+      rescueOptions,
+    );
+
+    expect(result.diagnostics.rawFloor).toBeCloseTo(0.48, 6);
+    expect(result.aggregation.notes.map((note) => note.noteId)).toEqual(["strong"]);
+  });
+
+  it("exposes the raw score of the visible RRF-winning rescued match", () => {
+    const raw = [hit("rescued", 0, 0.26, 1), hit("rescued", 1, 0.28, 2)];
+    const expanded = [hit("rescued", 0, 0.9, 1), hit("rescued", 1, 0.31, 2)];
+    const result = appendShortQueryConsensus(
+      aggregateChunkHits(raw, primaryOptions),
+      raw,
+      expanded,
+      { ...rescueOptions, maxMatchesPerNote: 1 },
+    );
+
+    const [rescued] = result.aggregation.notes;
+    expect(rescued.matches).toHaveLength(1);
+    expect(rescued.matches[0].primaryLine).toBe(1);
+    expect(rescued.bestScore).toBe(rescued.matches[0].score);
+    expect(rescued.bestScore).toBeCloseTo(0.26, 6);
+  });
+
+  it("counts all rescued anchors even when visible matches are capped", () => {
+    const raw = [
+      hit("primary", 0, 0.4, 1),
+      hit("primary", 1, 0.27, 2),
+      hit("primary", 2, 0.26, 3),
+    ];
+    const expanded = [hit("primary", 1, 0.34, 2), hit("primary", 2, 0.33, 3)];
+    const primary = aggregateChunkHits(raw, { ...primaryOptions, maxMatchesPerNote: 1 });
+    const result = appendShortQueryConsensus(primary, raw, expanded, {
+      ...rescueOptions,
+      maxMatchesPerNote: 1,
+    });
+
+    expect(result.aggregation.notes[0].matches).toHaveLength(1);
+    expect(result.aggregation.notes[0].matchedChunkCount).toBe(3);
+    expect(result.diagnostics.enrichedNoteCount).toBe(1);
   });
 });
 

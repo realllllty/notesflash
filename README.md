@@ -56,7 +56,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-`build:cloud-pwa` 会把最新的 `dist/` 同步到 `cloud/public/`。本地 Worker 随后在同一个 origin 提供 PWA、`/setup` 和 `/api/*`。Miniflare 可以验证 D1、FTS5、R2、配对、CRUD、静态资源和图片；Workers AI 与 Vectorize 需要远程绑定或部署到 Cloudflare 后验证。
+`build:cloud-pwa` 会把最新的 `dist/` 同步到 `cloud/public/`。本地 Worker 随后在同一个 origin 提供 PWA、`/setup` 和 `/api/*`。Miniflare 可以验证 D1、FTS5、R2、配对、CRUD、静态资源和图片；Workers AI、AI Search 与保留的 Vectorize 回退需要远程绑定或部署到 Cloudflare 后验证。
 
 ## 部署到用户自己的 Cloudflare
 
@@ -66,7 +66,9 @@ npm run dev
 https://deploy.workers.cloudflare.com/?url=https://github.com/realllllty/notesflash/tree/main/cloud
 ```
 
-Cloudflare 当前支持把完全隔离的 GitHub 子目录作为 Deploy Button 模板；`cloud/` 已包含自己的依赖、Worker 源码、migration 和预构建 PWA，因此可以独立导入。Cloudflare 会读取 `wrangler.jsonc`，自动配置 Worker Static Assets、D1、R2、Workers AI、Vectorize 和 Queue。`cloud/package.json` 的 `deploy` 脚本会先幂等创建行级向量索引 `notesflash-chunks`（768 维 cosine），再按 binding 名运行远程 D1 migration。
+Cloudflare 当前支持把完全隔离的 GitHub 子目录作为 Deploy Button 模板；`cloud/` 已包含自己的依赖、Worker 源码、migration 和预构建 PWA，因此可以独立导入。Cloudflare 会读取 `wrangler.jsonc`，配置 Worker Static Assets、D1、R2、Workers AI、默认 AI Search namespace、Vectorize 和 Queue。默认语义检索使用 AI Search 的 trigram keyword + multilingual vector hybrid retrieval，并由 RRF 融合；每个标题和每个非空逻辑正文行是一个独立 item。旧的 Vectorize 行级实现仍保留为 `SEMANTIC_BACKEND=vectorize` 的显式回退，不会在 AI Search 故障时静默启用。
+
+AI Search 目前是 Cloudflare Open Beta。NotesFlash 使用 built-in storage，并通过 Items Workers binding 直接上传标题和正文行；Cloudflare 文档明确这条路径不需要 R2-backed data source 使用的 service API token，也不要求用户向 NotesFlash 填任何 AI Search token。Worker 通过 `AI_SEARCH` namespace binding 幂等创建/打开 `notesflash-search` 实例；`cloud/package.json` 的 `deploy` 脚本仍会确保回退用的 `notesflash-chunks`（768 维 cosine）存在，再按 binding 名运行远程 D1 migration。
 
 部署过程不要求用户填写 NotesFlash 的环境变量或初始化 Secret。部署完成后，同一个地址就是手机端 PWA：
 
@@ -116,14 +118,15 @@ macOS 签名、公证、Universal Binary 和 DMG 详见 [docs/DEPLOYMENT.md](doc
 ```text
 D1          当前笔记、设备、Session、配对码、FTS5 索引
 R2          私有图片字节
-Workers AI  文档和查询 Embedding
-Vectorize   行级 chunk 向量与余弦相似度 Top-K
-Queue       异步索引和向量删除
+AI Search   标题/正文行明文副本、hybrid 索引与 RRF 检索
+Workers AI  短查询中英翻译；Vectorize 回退所需 Embedding
+Vectorize   显式回退用的行级 chunk 向量
+Queue       异步索引、provider 清理和向量删除
 ```
 
 当前 MVP 不把笔记标题、正文、搜索结果或图片写入浏览器本地数据库；编辑内容只存在于运行内存，保存成功后进入 D1。当前连接 profile（Worker endpoint、device token、device ID）存放在 `localStorage`。正式公开发布前，macOS 应把 token 移入 Keychain，PWA 同源部署时应优先使用 Secure HttpOnly Cookie。
 
-这套云端语义搜索不是零知识端到端加密：用户自己的 Worker、D1 和 Workers AI 在处理过程中能够看到明文。数据不会经过 NotesFlash 运营方的服务器。
+这套云端语义搜索不是零知识端到端加密：用户自己的 Worker 和 D1 保存笔记明文；默认启用时，Cloudflare AI Search built-in storage 还会保存每个标题和非空正文行的明文副本并处理搜索词，Workers AI 会处理需要翻译的短查询。软删除后，Queue 会先异步删除对应 AI Search items，完成后 D1/R2 才能按保留期永久清理。NotesFlash 不在 metadata 或 item key 中上传原始 note ID，数据也不会经过 NotesFlash 运营方的服务器。
 
 ## 文档
 

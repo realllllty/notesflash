@@ -1,0 +1,370 @@
+{
+  "name": "tech-large-calibration-v1",
+  "frozen": false,
+  "comment": "Sixty calibration queries for model, chunk-shape, rescue-gate, and threshold selection. Positive queries never contain their expected line verbatim.",
+  "queries": [
+    {
+      "query": "way in",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-003", "lineIncludes": "管理员可以从头像菜单里的服务入口打开控制台" }]
+    },
+    {
+      "query": "where can an operator open the control console",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-003", "lineIncludes": "管理员可以从头像菜单里的服务入口打开控制台" }],
+      "forbid": ["tech-004", "tech-005"]
+    },
+    {
+      "query": "way out",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-006", "lineIncludes": "安全出口位于机柜区西侧的防火门后" }]
+    },
+    {
+      "query": "which way should people leave during a fire",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-006", "lineIncludes": "安全出口位于机柜区西侧的防火门后" }],
+      "forbid": ["tech-007", "tech-045"]
+    },
+    {
+      "query": "preferences panel",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-008", "lineIncludes": "设置页面从搜索框右侧的滑杆图标打开" }]
+    },
+    {
+      "query": "where are application preferences opened",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-008", "lineIncludes": "设置页面从搜索框右侧的滑杆图标打开" }],
+      "forbid": ["tech-009"]
+    },
+    {
+      "query": "device trust check",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-010", "lineIncludes": "设备认证依赖一次性挑战值和本机保存的私钥" }]
+    },
+    {
+      "query": "how does a phone prove it is an approved device",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-010", "lineIncludes": "设备认证依赖一次性挑战值和本机保存的私钥" }],
+      "forbid": ["tech-011"]
+    },
+    {
+      "query": "send image",
+      "scenario": "short-en-to-zh-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-012", "lineIncludes": "单张图片超过十二兆字节时上传会被拒绝" }]
+    },
+    {
+      "query": "maximum image size accepted by the client",
+      "scenario": "short-en-to-zh-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-012", "lineIncludes": "单张图片超过十二兆字节时上传会被拒绝" }],
+      "forbid": ["tech-013"]
+    },
+    {
+      "query": "找回",
+      "scenario": "short-zh-to-en-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-001", "lineIncludes": "link becomes invalid after fifteen minutes" }]
+    },
+    {
+      "query": "忘记口令后验证链接能维持多久",
+      "scenario": "short-zh-to-en-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-001", "lineIncludes": "link becomes invalid after fifteen minutes" }]
+    },
+    {
+      "query": "撤权",
+      "scenario": "short-zh-to-en-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "tech-002", "lineIncludes": "invalidates every active session" }]
+    },
+    {
+      "query": "丢失电脑后怎样让已有登录全部失效",
+      "scenario": "short-zh-to-en-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-002", "lineIncludes": "invalidates every active session" }]
+    },
+    {
+      "query": "fallback when every passkey is lost",
+      "scenario": "security-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-015", "lineIncludes": "备用验证码只能使用一次" }]
+    },
+    {
+      "query": "如何阻止其他网站借登录状态提交修改",
+      "scenario": "security-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-016", "lineIncludes": "token bound to the current session" }]
+    },
+    {
+      "query": "how should a callback receiver check an untouched payload",
+      "scenario": "security-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-017", "lineIncludes": "解析 JSON 之前验证签名" }]
+    },
+    {
+      "query": "代码仓库里误传了令牌会怎样",
+      "scenario": "security-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-018", "lineIncludes": "confirmed leak blocks the merge" }]
+    },
+    {
+      "query": "can the image worker create storage containers",
+      "scenario": "security-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-019", "lineIncludes": "不具备创建新存储桶的权限" }]
+    },
+    {
+      "query": "双人批准在密钥管理的哪个操作上需要",
+      "scenario": "long-note-needle-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-020", "lineIncludes": "recovery console requires two people" }]
+    },
+    {
+      "query": "怎样证明备份并非只有文件而是真的可用",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-021", "lineIncludes": "application reads a sampled note" }]
+    },
+    {
+      "query": "when should a read-only database expose data freshness",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-022", "lineIncludes": "副本落后超过五秒时，报表请求会显示数据时间戳" }]
+    },
+    {
+      "query": "给已有大表增加必填字段的安全顺序",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-023", "lineIncludes": "Add the nullable column before releasing code" }],
+      "forbid": ["tech-024"]
+    },
+    {
+      "query": "how can a table change switch over with almost no lock time",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-024", "lineIncludes": "校验行数和校验和一致后再短暂切换表名" }],
+      "forbid": ["tech-023"]
+    },
+    {
+      "query": "大量更新删除后索引越来越臃肿怎么办",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-025", "lineIncludes": "Schedule a concurrent rebuild" }]
+    },
+    {
+      "query": "optimizer thinks far fewer rows than reality",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-026", "lineIncludes": "估算行数偏差很大，就刷新表统计信息" }]
+    },
+    {
+      "query": "数据库连接耗尽应该观察哪个等待指标",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-027", "lineIncludes": "measured by checkout time" }]
+    },
+    {
+      "query": "what must outlive a mobile retry window",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-028", "lineIncludes": "去重记录的保留时间必须长于客户端重试窗口" }]
+    },
+    {
+      "query": "库存扣减怎么避免并发超卖",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-029", "lineIncludes": "serializable transaction to prevent overselling" }]
+    },
+    {
+      "query": "how long are routine HTTP records kept",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-030", "lineIncludes": "普通请求日志保存十四天后自动删除" }]
+    },
+    {
+      "query": "半年以前的已完成任务放在哪里",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-031", "lineIncludes": "move to compressed object storage" }]
+    },
+    {
+      "query": "what should a database query see without tenant context",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-032", "lineIncludes": "没有租户上下文的查询默认看不到任何业务行" }]
+    },
+    {
+      "query": "报表怎样让数据库跳过无关月份",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-033", "lineIncludes": "skip monthly partitions only when the boundary is explicit" }]
+    },
+    {
+      "query": "where does each change-stream reader remember progress",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-034", "lineIncludes": "独立保存最后确认的偏移量" }]
+    },
+    {
+      "query": "会话数据能否因为内存压力被逐出",
+      "scenario": "data-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-035", "lineIncludes": "Session records use a dedicated instance where eviction is disabled" }]
+    },
+    {
+      "query": "how do requests avoid all rebuilding an expired hot value",
+      "scenario": "data-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-036", "lineIncludes": "一个请求取得刷新锁，其他请求继续读取旧值" }]
+    },
+    {
+      "query": "换成向量宽度不同的模型要怎么迁移",
+      "scenario": "search-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-037", "lineIncludes": "requires a new collection when vector widths differ" }]
+    },
+    {
+      "query": "which scope restrictions must precede nearest-neighbor lookup",
+      "scenario": "search-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-038", "lineIncludes": "先限定当前用户和未删除状态" }]
+    },
+    {
+      "query": "没有完成的分片传输多久清理",
+      "scenario": "storage-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-039", "lineIncludes": "Incomplete multipart transfers are removed after one day" }]
+    },
+    {
+      "query": "what is the emergency response to a leaked image signing secret",
+      "scenario": "long-note-needle-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-040", "lineIncludes": "立即轮换并缩短所有现存链接的有效期" }]
+    },
+    {
+      "query": "只预览基础设施改动并保存结果的命令",
+      "scenario": "identifier-command-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-041", "lineIncludes": "terraform plan -out=release.tfplan" }]
+    },
+    {
+      "query": "command to restore the previous Kubernetes deployment revision",
+      "scenario": "identifier-command-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-042", "lineIncludes": "kubectl rollout undo deployment/notes-api" }]
+    },
+    {
+      "query": "在不真正更新集群时查看渲染资源",
+      "scenario": "identifier-command-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-043", "lineIncludes": "helm upgrade notes ./chart --dry-run --debug" }]
+    },
+    {
+      "query": "which command applies pending database changes to production",
+      "scenario": "identifier-command-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-044", "lineIncludes": "wrangler d1 migrations apply DB --remote" }]
+    },
+    {
+      "query": "容器为什么会以一三七结束",
+      "scenario": "infra-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-045", "lineIncludes": "process exceeded its memory allowance" }]
+    },
+    {
+      "query": "what signal drives replica count when CPU is misleading",
+      "scenario": "infra-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-046", "lineIncludes": "副本数根据排队时长而不是 CPU 单独决定" }]
+    },
+    {
+      "query": "怎样在切换流量前验证备用环境里的候选版本",
+      "scenario": "release-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-047", "lineIncludes": "Warm caches and run smoke checks before switching the router" }],
+      "forbid": ["tech-048"]
+    },
+    {
+      "query": "what happens when a core metric breaches during gradual rollout",
+      "scenario": "release-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "tech-048", "lineIncludes": "任何核心指标越界都会自动停止放量" }],
+      "forbid": ["tech-047"]
+    },
+    {
+      "query": "journal entry debit and credit",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-003"]
+    },
+    {
+      "query": "entry-level engineer compensation",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-003"]
+    },
+    {
+      "query": "exit poll turnout prediction",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-006"]
+    },
+    {
+      "query": "setting of a fantasy novel",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-008"]
+    },
+    {
+      "query": "authenticate a renaissance painting",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-010"]
+    },
+    {
+      "query": "upload human consciousness into a robot",
+      "scenario": "hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["tech-012"]
+    },
+    {
+      "query": "configure GPU partitioning for machine-learning pods",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "quantum error correction for trapped ions",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "satellite telemetry packet recovery",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "COBOL mainframe compiler licensing",
+      "scenario": "hard-negative-unanswerable-tech",
+      "expect": []
+    },
+    {
+      "query": "how to maintain a rye sourdough starter",
+      "scenario": "hard-negative-unanswerable-general",
+      "expect": []
+    },
+    {
+      "query": "跨境个人所得税退税材料",
+      "scenario": "hard-negative-unanswerable-general",
+      "expect": []
+    }
+  ]
+}

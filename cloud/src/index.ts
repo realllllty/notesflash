@@ -20,6 +20,7 @@ import {
   updateNote,
 } from "./notes";
 import { consumeIndexQueue, retryPendingIndexes } from "./queue";
+import { aiSearchConfig } from "./ai-search";
 import { lexicalSearch, searchIndexStatus, semanticSearch } from "./search";
 import { searchLab } from "./lab";
 import { setupPage } from "./setup-page";
@@ -40,10 +41,19 @@ async function route(context: RequestContext): Promise<Response> {
   }
   if (path === "/setup" && method === "GET") return setupPage();
   if (path === "/api/meta" && method === "GET") {
+    const semanticBackend = aiSearchConfig(context.env).backend;
     return json({
       name: context.env.INSTANCE_NAME ?? "NotesFlash Cloud",
       apiVersion: 1,
-      capabilities: ["notes", "images", "lexical-search", "semantic-search", "pairing"],
+      capabilities: [
+        "notes",
+        "images",
+        "lexical-search",
+        "semantic-search",
+        semanticBackend === "ai-search" ? "cloudflare-ai-search" : "legacy-vectorize",
+        "pairing",
+      ],
+      semanticBackend,
     });
   }
   if (path === "/api/setup/status" && method === "GET") return setupStatus(context);

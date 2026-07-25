@@ -51,10 +51,38 @@
       "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
     },
     "lines-gemma": {
-      "note": "EmbeddingGemma 300M (768 dimensions) with line-window chunking.",
+      "note": "EmbeddingGemma line windows with calibrated short-query same-chunk consensus.",
       "model": "@cf/google/embeddinggemma-300m",
       "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
       "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-gemma-raw": {
+      "note": "Control: current primary 0.3/0.6 thresholds without short-query rescue.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 },
+      "shortQueryRescue": { "enabled": false }
+    },
+    "lines-gemma-low-floor": {
+      "note": "Noise control: globally lower the primary floor instead of requiring consensus.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.235, "relativeMinRatio": 0.6 },
+      "shortQueryRescue": { "enabled": false }
+    },
+    "lines-gemma-consensus-loose": {
+      "note": "Calibration-only looser consensus gates; never promote without negative discipline.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 },
+      "shortQueryRescue": { "enabled": true, "rawMinCosine": 0.23, "expandedMinCosine": 0.29 }
+    },
+    "lines-gemma-consensus-strict": {
+      "note": "Calibration-only stricter consensus gates for precision comparison.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 },
+      "shortQueryRescue": { "enabled": true, "rawMinCosine": 0.24, "expandedMinCosine": 0.31 }
     },
     "lines-gemma-no-title": {
       "note": "Measures how much the title prefix contributes for EmbeddingGemma.",

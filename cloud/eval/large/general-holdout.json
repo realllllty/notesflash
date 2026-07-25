@@ -1,0 +1,246 @@
+{
+  "name": "general-large-holdout-v1",
+  "frozen": true,
+  "comment": "Frozen forty-query release gate. It contains thirty positives, including paired ambiguous/contextual forms and long-note needles, plus ten unseen polysemy or related-domain negatives. Do not use it to choose a model, prompt, chunk shape, or threshold.",
+  "queries": [
+    {
+      "query": "work costs",
+      "scenario": "holdout-short-same-language-en-ambiguous",
+      "requiredRank": 3,
+      "expect": [{ "key": "g052", "lineIncludes": "Claims should be submitted within thirty days" }]
+    },
+    {
+      "query": "conference reimbursement approval",
+      "scenario": "holdout-context-same-language-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g052", "lineIncludes": "A manager must approve any conference fee above five hundred dollars" }]
+    },
+    {
+      "query": "retirement match",
+      "scenario": "holdout-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g053", "lineIncludes": "雇主会按相同比例匹配到百分之三" }]
+    },
+    {
+      "query": "move-out notice",
+      "scenario": "holdout-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g056", "lineIncludes": "准备退租时要提前三十天书面告知房东" }]
+    },
+    {
+      "query": "tenant departure warning period",
+      "scenario": "holdout-context-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g056", "lineIncludes": "准备退租时要提前三十天书面告知房东" }]
+    },
+    {
+      "query": "网购反悔期多久",
+      "scenario": "holdout-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g057", "lineIncludes": "The cooling-off period lasts fourteen days after delivery" }]
+    },
+    {
+      "query": "who owns a photo",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g058", "lineIncludes": "拍摄者通常在按下快门时取得作品版权" }]
+    },
+    {
+      "query": "parking appeal deadline",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g062", "lineIncludes": "申诉必须在通知日期后的二十一天内提交" }]
+    },
+    {
+      "query": "stop yearly contract renewal",
+      "scenario": "holdout-long-note-single-line-same-language-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g065", "lineIncludes": "The agreement renews for another year unless canceled in writing" }]
+    },
+    {
+      "query": "bleed",
+      "scenario": "holdout-one-token-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g067", "lineIncludes": "关闭供暖后用小钥匙慢慢打开排气阀" }]
+    },
+    {
+      "query": "bleed radiator",
+      "scenario": "holdout-context-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g067", "lineIncludes": "关闭供暖后用小钥匙慢慢打开排气阀" }]
+    },
+    {
+      "query": "main water valve",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g073", "lineIncludes": "先顺时针关闭厨房水槽下方的总阀" }]
+    },
+    {
+      "query": "which wall work should be photographed",
+      "scenario": "holdout-long-note-single-line-same-language-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g076", "lineIncludes": "Photograph electrical wiring before the walls close" }]
+    },
+    {
+      "query": "proofing",
+      "scenario": "holdout-one-token-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g078", "lineIncludes": "手指轻按面团后缓慢回弹说明可以烘烤" }]
+    },
+    {
+      "query": "bread dough readiness",
+      "scenario": "holdout-context-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g078", "lineIncludes": "手指轻按面团后缓慢回弹说明可以烘烤" }]
+    },
+    {
+      "query": "米饭煮好后要不要马上开盖",
+      "scenario": "holdout-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g079", "lineIncludes": "Let the cooked grains rest covered for ten minutes" }]
+    },
+    {
+      "query": "coffee extraction runs quickly",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g080", "lineIncludes": "流速太快而味道偏淡时把颗粒调细" }]
+    },
+    {
+      "query": "steam fish timing for dinner",
+      "scenario": "holdout-long-note-single-line-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g086", "lineIncludes": "清蒸鱼要等所有人落座后再下锅" }]
+    },
+    {
+      "query": "eye focus",
+      "scenario": "holdout-short-same-language-en-ambiguous",
+      "requiredRank": 3,
+      "expect": [{ "key": "g090", "lineIncludes": "Enable eye detection for a moving subject" }]
+    },
+    {
+      "query": "机场安检怎样保护胶卷",
+      "scenario": "holdout-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g092", "lineIncludes": "Ask for a hand inspection when carrying high-speed film" }]
+    },
+    {
+      "query": "ring exchange camera angle",
+      "scenario": "holdout-long-note-single-line-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g097", "lineIncludes": "交换戒指时保持第二机位对准双手" }]
+    },
+    {
+      "query": "subtitle",
+      "scenario": "holdout-one-token-same-language-en-paraphrase",
+      "requiredRank": 3,
+      "expect": [{ "key": "g101", "lineIncludes": "Selected performances provide translated captions above the stage" }]
+    },
+    {
+      "query": "theatre translation display",
+      "scenario": "holdout-context-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g101", "lineIncludes": "Selected performances provide translated captions above the stage" }]
+    },
+    {
+      "query": "opera seats for balanced sound",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g104", "lineIncludes": "二层中央能更均衡地听到乐队" }]
+    },
+    {
+      "query": "concert recorder placement",
+      "scenario": "holdout-long-note-single-line-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g108", "lineIncludes": "录音设备放在观众席第六排中央" }]
+    },
+    {
+      "query": "watch shooting stars",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g111", "lineIncludes": "不需要望远镜，直接观察更大的天空范围" }]
+    },
+    {
+      "query": "空白PCR对照",
+      "scenario": "holdout-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g112", "lineIncludes": "Include a no-template control in every run" }]
+    },
+    {
+      "query": "区间越窄说明什么",
+      "scenario": "holdout-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g116", "lineIncludes": "A narrower interval represents a more precise estimate under the model" }]
+    },
+    {
+      "query": "rain effect on cloudy water measurements",
+      "scenario": "holdout-long-note-single-line-same-language-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g118", "lineIncludes": "Note recent rainfall because it changes turbidity" }]
+    },
+    {
+      "query": "why a planet shimmers at high magnification",
+      "scenario": "holdout-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g113", "lineIncludes": "镜内热流会让高倍图像不断晃动" }]
+    },
+    {
+      "query": "cost of emotional labor",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g052"]
+    },
+    {
+      "query": "notice the color contrast",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g056"]
+    },
+    {
+      "query": "bleeding heart flower",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g067"]
+    },
+    {
+      "query": "legal standard of proof",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g078"]
+    },
+    {
+      "query": "caption contest joke",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g101"]
+    },
+    {
+      "query": "controlling personality traits",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g112"]
+    },
+    {
+      "query": "retire a sports jersey",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g053"]
+    },
+    {
+      "query": "clone a hard drive image",
+      "scenario": "holdout-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g058", "g091"]
+    },
+    {
+      "query": "quantum entanglement laboratory experiment",
+      "scenario": "holdout-negative-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "marathon training schedule",
+      "scenario": "holdout-related-domain-unanswerable",
+      "expect": [],
+      "forbid": ["g027", "g032"]
+    }
+  ]
+}

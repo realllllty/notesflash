@@ -7,12 +7,34 @@
   "vars": {
     "INSTANCE_NAME": "NotesFlash Cloud",
     "ALLOWED_ORIGINS": "*",
-    // Calibrated with cloud/eval against the Workers AI catalogue: EmbeddingGemma
-    // gave the best cross-language line recall and the widest score gap between
-    // true positives and "nothing matches" queries.
+    // Literal D1/FTS search remains first. Cloudflare AI Search runs only when
+    // that path returns no rows; the legacy Vectorize implementation stays
+    // available through the explicit "vectorize" backend switch.
+    "SEMANTIC_BACKEND": "ai-search",
+    "AI_SEARCH_ENABLED": "true",
+    "AI_SEARCH_INSTANCE_NAME": "notesflash-search",
+    // AI Search query rewrite only rewrites follow-up conversation messages,
+    // not NotesFlash's independent first query. Translate zh/en explicitly.
+    "AI_SEARCH_QUERY_TRANSLATION": "true",
+    "AI_SEARCH_QUERY_REWRITE": "false",
+    "AI_SEARCH_RERANKING": "false",
+    "AI_SEARCH_MAX_RESULTS": "50",
+    "AI_SEARCH_MAX_MATCHES_PER_NOTE": "3",
+    "AI_SEARCH_MAX_ITEMS_PER_NOTE": "2000",
+    // The settings below belong to the retained Vectorize fallback.
+    // Current 768-dimension production model. Any replacement requires a fresh,
+    // leakage-free calibration + frozen holdout run and a new matching index.
     "EMBEDDING_MODEL": "@cf/google/embeddinggemma-300m",
     "SEMANTIC_MIN_COSINE": "0.3",
     "SEMANTIC_RELATIVE_MIN_RATIO": "0.6",
+    // Ambiguous short queries use a second contextual query view. A chunk is
+    // rescued only when both views find that exact same line, so the primary
+    // 0.3 threshold and the ordering of existing strong results stay intact.
+    "SEMANTIC_SHORT_QUERY_RESCUE": "true",
+    "SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS": "24",
+    "SEMANTIC_SHORT_QUERY_MAX_TOKENS": "3",
+    "SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE": "0.235",
+    "SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE": "0.3",
     "SEMANTIC_MULTI_CHUNK_BONUS": "0.01",
     "SEMANTIC_MAX_BONUS_CHUNKS": "3",
     "SEMANTIC_MAX_MATCHES_PER_NOTE": "3",
@@ -66,6 +88,12 @@
   "ai": {
     "binding": "AI"
   },
+  "ai_search_namespaces": [
+    {
+      "binding": "AI_SEARCH",
+      "namespace": "default"
+    }
+  ],
   "queues": {
     "producers": [
       {
@@ -76,7 +104,9 @@
     "consumers": [
       {
         "queue": "notesflash-index",
-        "max_batch_size": 20,
+        // AI Search line synchronization is paged against the per-invocation
+        // internal-subrequest budget, so one Queue message owns each invocation.
+        "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 5
       }

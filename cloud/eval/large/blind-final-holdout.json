@@ -1,0 +1,730 @@
+{
+  "name": "blind-final-semantic-v1",
+  "frozen": true,
+  "comment": "Blind final holdout over the paired 60-note slice. It contains exactly 30 balanced cross-language queries, 12 same-language paraphrases, 8 close-distractor cases, and 10 unanswerable negatives. Every positive expectation names one complete source line. Short broad terms allow rank three, short specific phrases rank two, and contextual phrases rank one.",
+  "queries": [
+    {
+      "query": "rolling service credentials",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "software",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n002",
+          "lineIncludes": "确认所有工作进程已读取新值后，再撤销旧凭据。"
+        }
+      ]
+    },
+    {
+      "query": "merge conflict",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "software",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n004",
+          "lineIncludes": "同一段内容在两台设备都被修改时，保留两个版本供用户选择。"
+        }
+      ]
+    },
+    {
+      "query": "缓存顺序",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "software",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n001",
+          "lineIncludes": "When a product changes, publish the database row before removing the old cache entry."
+        }
+      ]
+    },
+    {
+      "query": "线上告警分级",
+      "scenario": "same-language-paraphrase-zh",
+      "domain": "software",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n006",
+          "lineIncludes": "支付或登录大面积失败时立即呼叫值班负责人。"
+        }
+      ]
+    },
+    {
+      "query": "traffic switch after primary outage",
+      "scenario": "close-distractor",
+      "domain": "software",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n003",
+          "lineIncludes": "Move a small share of read traffic first, then switch writers during the maintenance window."
+        }
+      ],
+      "forbid": [
+        "blind-n005"
+      ]
+    },
+    {
+      "query": "washday",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "daily-life",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n008",
+          "lineIncludes": "公用洗衣机结束后十分钟内取走衣物，避免占用下一位的时段。"
+        }
+      ]
+    },
+    {
+      "query": "夜班买菜",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "daily-life",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n007",
+          "lineIncludes": "Place the order before lunch and choose the locker beside the night bus stop."
+        }
+      ]
+    },
+    {
+      "query": "钥匙托管",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "daily-life",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n009",
+          "lineIncludes": "Leave the sealed spare with Mina in apartment 4B while we are away."
+        }
+      ]
+    },
+    {
+      "query": "weekday meal batching",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "daily-life",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n011",
+          "lineIncludes": "Cook a pot of grains and roast two trays of vegetables before the week begins."
+        }
+      ]
+    },
+    {
+      "query": "快递柜取件码失效",
+      "scenario": "close-distractor",
+      "domain": "daily-life",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n010",
+          "lineIncludes": "取件码失效时带身份证明，请工作人员重新发送一次。"
+        }
+      ],
+      "forbid": [
+        "blind-n009"
+      ]
+    },
+    {
+      "query": "rail connection",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "travel",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n014",
+          "lineIncludes": "错过衔接可在服务台免费改签到次日首班。"
+        }
+      ]
+    },
+    {
+      "query": "cloakroom",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "travel",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n016",
+          "lineIncludes": "地下一层有免费寄存柜，但需要一枚硬币作为押金。"
+        }
+      ]
+    },
+    {
+      "query": "雷雨撤离",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "travel",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n015",
+          "lineIncludes": "Leave the ridge immediately when thunder is heard."
+        }
+      ]
+    },
+    {
+      "query": "quiet-car etiquette",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "travel",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n017",
+          "lineIncludes": "Take phone calls in the vestibule and silence notification sounds before boarding."
+        }
+      ]
+    },
+    {
+      "query": "checked bag on separate tickets",
+      "scenario": "close-distractor",
+      "domain": "travel",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n013",
+          "lineIncludes": "If through-tagging is refused, collect the bag, clear customs, and check it again."
+        }
+      ],
+      "forbid": [
+        "blind-n014"
+      ]
+    },
+    {
+      "query": "missed dose",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "health",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n020",
+          "lineIncludes": "这张提醒针对医生开的短期抗生素：先查看药盒标签，不要自行把下一次剂量加倍。"
+        }
+      ]
+    },
+    {
+      "query": "膝痛",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "health",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n019",
+          "lineIncludes": "Pause hill repeats for a week and switch to level walking if it does not hurt."
+        }
+      ]
+    },
+    {
+      "query": "头痛触发记录",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "health",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n021",
+          "lineIncludes": "Record the start time, duration, meal gaps, menstrual cycle, and recent stress."
+        }
+      ]
+    },
+    {
+      "query": "refill lead time",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "health",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n023",
+          "lineIncludes": "Count the remaining tablets ten days before the bottle will be empty."
+        }
+      ]
+    },
+    {
+      "query": "睡眠断续记录",
+      "scenario": "close-distractor",
+      "domain": "health",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n022",
+          "lineIncludes": "连续两周记下上床时间、夜间醒来次数和最终起床时间。"
+        }
+      ],
+      "forbid": [
+        "blind-n021"
+      ]
+    },
+    {
+      "query": "TA consultation prep",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "education",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n026",
+          "lineIncludes": "先把尝试过的步骤和具体卡点写成三行，再去见助教。"
+        }
+      ]
+    },
+    {
+      "query": "distributed recall",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "education",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n028",
+          "lineIncludes": "新概念在当天、三天后和一周后各回忆一次。"
+        }
+      ]
+    },
+    {
+      "query": "论题收窄",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "education",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n025",
+          "lineIncludes": "Turn the broad topic into one claim about a specific place, decade, and source set."
+        }
+      ]
+    },
+    {
+      "query": "reference cleanup",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "education",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n029",
+          "lineIncludes": "Verify author names and publication years against the original source before formatting."
+        }
+      ]
+    },
+    {
+      "query": "汇报忘词应对",
+      "scenario": "same-language-paraphrase-zh",
+      "domain": "education",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n030",
+          "lineIncludes": "有人突然忘词时，下一位先总结上一张幻灯片再接着讲。"
+        }
+      ]
+    },
+    {
+      "query": "chargeback",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "finance",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n032",
+          "lineIncludes": "向发卡行说明不认识该交易，同时询问是否需要更换卡号。"
+        }
+      ]
+    },
+    {
+      "query": "税务留存",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "finance",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n031",
+          "lineIncludes": "Move thirty percent of every client payment into a separate savings account on receipt."
+        }
+      ]
+    },
+    {
+      "query": "提前还贷费用",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "finance",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n033",
+          "lineIncludes": "Amounts above the allowance may trigger an early repayment charge."
+        }
+      ]
+    },
+    {
+      "query": "subscription audit",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "finance",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n035",
+          "lineIncludes": "Export three months of statements and highlight charges that repeat on the same date."
+        }
+      ]
+    },
+    {
+      "query": "突发失业备用钱",
+      "scenario": "close-distractor",
+      "domain": "finance",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n034",
+          "lineIncludes": "这笔钱只用于失业、紧急医疗或无法推迟的房屋维修。"
+        }
+      ],
+      "forbid": [
+        "blind-n031"
+      ]
+    },
+    {
+      "query": "deposit evidence",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "law",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n038",
+          "lineIncludes": "入住和搬出当天都拍摄带日期的房间全景与细节。"
+        }
+      ]
+    },
+    {
+      "query": "lease break",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "law",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n040",
+          "lineIncludes": "先查看合同中的通知期限和允许提前解约的情形。"
+        }
+      ]
+    },
+    {
+      "query": "撤回肖像许可",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "law",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n037",
+          "lineIncludes": "A participant may withdraw consent for future publication by emailing the organizer."
+        }
+      ]
+    },
+    {
+      "query": "cleanup waiver",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "law",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n041",
+          "lineIncludes": "The form explains ordinary activity risks but does not excuse deliberate misconduct."
+        }
+      ]
+    },
+    {
+      "query": "freelance draft ownership",
+      "scenario": "close-distractor",
+      "domain": "law",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n039",
+          "lineIncludes": "The contract says rough sketches remain the illustrator's property until the final invoice is paid."
+        }
+      ],
+      "forbid": [
+        "blind-n037"
+      ]
+    },
+    {
+      "query": "untreated control",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "science",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n044",
+          "lineIncludes": "每个处理组旁边保留未添加肥料的同批幼苗。"
+        }
+      ]
+    },
+    {
+      "query": "探头校正",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "science",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n043",
+          "lineIncludes": "Place the probe in two certified reference solutions before collecting field readings."
+        }
+      ]
+    },
+    {
+      "query": "凌星",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "science",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n045",
+          "lineIncludes": "A shallow repeated dip may indicate a planet crossing the stellar disk."
+        }
+      ]
+    },
+    {
+      "query": "潮间带抽样",
+      "scenario": "same-language-paraphrase-zh",
+      "domain": "science",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n046",
+          "lineIncludes": "沿固定样线每隔两米放置一次方框，记录其中的物种和数量。"
+        }
+      ]
+    },
+    {
+      "query": "intrinsic star brightness changes",
+      "scenario": "close-distractor",
+      "domain": "science",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n047",
+          "lineIncludes": "Report unusual changes only after checking the camera clock and image artifacts."
+        }
+      ],
+      "forbid": [
+        "blind-n045"
+      ]
+    },
+    {
+      "query": "release radiator air",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "home",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n050",
+          "lineIncludes": "关闭供暖后等待设备冷却，再慢慢打开排气阀。"
+        }
+      ]
+    },
+    {
+      "query": "water ring",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "home",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n054",
+          "lineIncludes": "浅色白印可隔着棉布用低温短暂加热，每次几秒后检查。"
+        }
+      ]
+    },
+    {
+      "query": "冷冻品断电",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "home",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n049",
+          "lineIncludes": "Food that still contains ice crystals can usually be refrozen once power returns."
+        }
+      ]
+    },
+    {
+      "query": "gritty glassware",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "home",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n052",
+          "lineIncludes": "Clean the filter under the lower rack and check that the spray arms turn freely."
+        }
+      ]
+    },
+    {
+      "query": "衣柜后霉点处理",
+      "scenario": "close-distractor",
+      "domain": "home",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n051",
+          "lineIncludes": "佩戴手套清理小面积表面霉斑，不要干刷或混用清洁剂。"
+        }
+      ],
+      "forbid": [
+        "blind-n053"
+      ]
+    },
+    {
+      "query": "accessible subtitles",
+      "scenario": "cross-language-en-to-zh",
+      "domain": "culture",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n056",
+          "lineIncludes": "为听障观众准备带说话人标记的字幕文件。"
+        }
+      ]
+    },
+    {
+      "query": "换气点",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "culture",
+      "requiredRank": 3,
+      "expect": [
+        {
+          "key": "blind-n055",
+          "lineIncludes": "Mark staggered breathing points so the section does not inhale together."
+        }
+      ]
+    },
+    {
+      "query": "初版线索",
+      "scenario": "cross-language-zh-to-en",
+      "domain": "culture",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n057",
+          "lineIncludes": "Check the copyright-page number line and compare it with the publisher's bibliography."
+        }
+      ]
+    },
+    {
+      "query": "续茶礼数",
+      "scenario": "same-language-paraphrase-zh",
+      "domain": "culture",
+      "requiredRank": 2,
+      "expect": [
+        {
+          "key": "blind-n058",
+          "lineIncludes": "先询问客人是否想再添，不要默认为每只杯子倒满。"
+        }
+      ]
+    },
+    {
+      "query": "concise exhibit labels",
+      "scenario": "same-language-paraphrase-en",
+      "domain": "culture",
+      "requiredRank": 1,
+      "expect": [
+        {
+          "key": "blind-n059",
+          "lineIncludes": "Keep the main label under one hundred words and place translations at equal height."
+        }
+      ]
+    },
+    {
+      "query": "album release date",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "software",
+      "expect": [],
+      "forbid": [
+        "blind-n005",
+        "blind-n037"
+      ]
+    },
+    {
+      "query": "laundry list",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "daily-life",
+      "expect": [],
+      "forbid": [
+        "blind-n008"
+      ]
+    },
+    {
+      "query": "model train repair",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "travel",
+      "expect": [],
+      "forbid": [
+        "blind-n014"
+      ]
+    },
+    {
+      "query": "viral post metrics",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "health",
+      "expect": [],
+      "forbid": [
+        "blind-n020",
+        "blind-n021"
+      ]
+    },
+    {
+      "query": "class inheritance",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "education",
+      "expect": [],
+      "forbid": [
+        "blind-n026",
+        "blind-n027"
+      ]
+    },
+    {
+      "query": "river bank erosion",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "finance",
+      "expect": [],
+      "forbid": [
+        "blind-n032",
+        "blind-n036"
+      ]
+    },
+    {
+      "query": "gravity law homework",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "law",
+      "expect": [],
+      "forbid": [
+        "blind-n025",
+        "blind-n040",
+        "blind-n045"
+      ]
+    },
+    {
+      "query": "control freak",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "science",
+      "expect": [],
+      "forbid": [
+        "blind-n044"
+      ]
+    },
+    {
+      "query": "home plate dimensions",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "home",
+      "expect": [],
+      "forbid": [
+        "blind-n049",
+        "blind-n054"
+      ]
+    },
+    {
+      "query": "bacterial culture temperature",
+      "scenario": "unanswerable-negative-polysemy",
+      "domain": "culture",
+      "expect": [],
+      "forbid": [
+        "blind-n048",
+        "blind-n055",
+        "blind-n056"
+      ]
+    }
+  ]
+}

@@ -5,8 +5,11 @@
   "type": "module",
   "cloudflare": {
     "bindings": {
+      "AI_SEARCH": {
+        "description": "Default Cloudflare AI Search namespace. The Worker automatically opens or creates the built-in notesflash-search hybrid keyword/vector instance."
+      },
       "CHUNK_INDEX": {
-        "description": "Line-level semantic index. EmbeddingGemma vectors with **768 dimensions** and the **cosine** metric."
+        "description": "Legacy line-level semantic fallback. EmbeddingGemma vectors with **768 dimensions** and the **cosine** metric."
       },
       "VECTOR_INDEX": {
         "description": "Legacy note-level index (**1024 dimensions**, **cosine**). Only used to clean up vectors from older releases."

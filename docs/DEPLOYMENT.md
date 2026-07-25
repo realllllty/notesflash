@@ -7,8 +7,13 @@ This document describes the MVP deployment model for NotesFlash:
 - every user deploys the NotesFlash Cloud worker into their own Cloudflare account;
 - the desktop and PWA pair with that worker using a short-lived one-time code;
 - note text is not persisted in a client-side note database;
-- note text and metadata live in D1, images live in R2, and line-level chunk vectors live in Vectorize;
-- character matching is performed against D1/FTS, while semantic matching embeds the query once and retrieves line-level chunks from Vectorize.
+- note text and metadata live in D1, images live in R2, and semantic title/line
+  items live in Cloudflare AI Search as a rebuildable index;
+- character matching is performed against D1/FTS first; only an empty character
+  result invokes AI Search hybrid keyword/vector retrieval with RRF and optional
+  Chinese/English query translation;
+- the existing line-level Vectorize implementation remains available only as an
+  explicit deployment rollback while the new backend is validated.
 
 The publisher of NotesFlash does **not** need to run an OAuth callback or a data backend. Cloudflare handles the authorization needed to deploy the template. Runtime authentication is handled by the worker that belongs to the user.
 
@@ -23,12 +28,17 @@ macOS Tauri app ───────────────┐      PWA runnin
 PWA ──────────────────────────┼────────► Worker API and /setup
                               │                 ├── D1: notes, devices, sessions, FTS
 first-claim browser page ─────┘                 ├── R2: note images
-                                                ├── Workers AI: query and chunk embeddings
-                                                ├── Vectorize: line-level chunk vectors
-                                                └── Queue: asynchronous indexing
+                                                ├── Workers AI: zh/en query translation
+                                                ├── AI Search: hybrid line-item retrieval + RRF
+                                                ├── Vectorize: explicit legacy fallback
+                                                └── Queue: independent asynchronous indexes
 ```
 
-The Cloudflare account token, D1 database ID, R2 credentials, Workers AI credentials, and Vectorize credentials never need to be copied into NotesFlash. The worker uses Cloudflare bindings to access those resources.
+The Cloudflare account token, D1 database ID, R2 credentials, Workers AI
+credentials, Vectorize credentials, and AI Search credentials never need to be
+copied into NotesFlash. The worker uses Cloudflare bindings. NotesFlash uploads
+items into AI Search built-in storage, so the separate service API token used by
+R2-backed AI Search data sources is not required.
 
 The only connection information stored by a native client is expected to be:
 
@@ -329,13 +339,57 @@ The deployment template declares the following bindings:
 | --- | --- | --- |
 | `DB` | D1 | note text, metadata, devices, sessions, pairing codes, character/FTS search state |
 | `IMAGES` | R2 | original note images and authorized image delivery |
-| `AI` | Workers AI | query embeddings, chunk embeddings, optional span refinement |
-| `CHUNK_INDEX` | Vectorize | line-level chunk vectors queried by semantic search (768 dimensions, cosine) |
+| `AI` | Workers AI | Chinese/English standalone-query translation and legacy fallback embeddings |
+| `AI_SEARCH` | AI Search namespace | managed `notesflash-search` hybrid keyword/vector instance |
+| `CHUNK_INDEX` | Vectorize | explicit legacy line-level semantic fallback (768 dimensions, cosine) |
 | `VECTOR_INDEX` | Vectorize | legacy note-level index, kept only to clean up pre-upgrade vectors |
-| `INDEX_QUEUE` | Queue | asynchronous chunk indexing and vector deletion |
+| `INDEX_QUEUE` | Queue | independent AI Search item sync and legacy vector maintenance |
 | `ASSETS` | Worker Static Assets | same-origin PWA shell, manifest, service worker, and icons |
 
-When literal search is empty, semantic search embeds the query once with `EMBEDDING_MODEL` (default `@cf/google/embeddinggemma-300m`, 768 dimensions), retrieves `SEMANTIC_CHUNK_TOP_K` chunk vectors from `CHUNK_INDEX`, resolves each candidate to its line anchor in `note_chunks`, drops candidates whose note was deleted or edited since indexing, and groups the rest per note. Results carry `matches[]` with the matched line number and character offsets, so a client highlights the exact span. Two thresholds apply together: `SEMANTIC_MIN_COSINE` (default `0.3`) rejects queries nothing answers, and `SEMANTIC_RELATIVE_MIN_RATIO` (default `0.6`) trims the weak tail behind a better chunk. Both were calibrated on the `cloud/eval` corpus, where negative-only queries peaked at 0.231 while the weakest true positive scored 0.345. `npm run deploy` provisions the chunk index before applying migrations, and refuses to continue if an existing index has a different dimension than the configured model.
+When literal search is empty, the default semantic path optionally translates
+the original Chinese or English query with `@cf/meta/m2m100-1.2b`, then sends the
+original and translated forms to Cloudflare AI Search. The managed instance uses
+trigram keyword retrieval plus multilingual vector retrieval and fuses their
+ranks with RRF. Managed query rewrite remains off: Cloudflare documents it for
+conversation follow-ups, and it does not rewrite the first independent query
+used by NotesFlash. Mixed technical queries and inputs longer than 256 Unicode
+code points remain unchanged so identifiers are never translated. Managed
+reranking is also off for the initial prototype.
+
+Each title and each non-empty, non-image logical body line is normally one AI
+Search item. A line large enough to approach the 4 MB provider file limit is
+split at Unicode-safe boundaries into multiple items with the same line anchor.
+The provider response is only a ranked candidate list. Before returning a hit,
+the Worker checks the item key, provider metadata hash, note content hash, index
+state, and deletion state against D1. Note text, line numbers, and character
+offsets always come from current D1 data. The provider's final response order is
+kept through note aggregation; NotesFlash does not add cosine thresholds or its
+own ranking bonuses on top of RRF.
+
+The Queue consumer treats AI Search and Vectorize as independent idempotent
+state machines. AI Search stores its provider item ID in D1 because deletion
+accepts that internal ID, not the upload key. A stale queue job cannot overwrite
+a newer note because item keys include immutable text hashes and every write is
+guarded by note version/content hash. A failed AI Search upload does not update
+`embedding_status` or rerun Vectorize. Cron repairs incomplete manifests and
+deleted-item cleanup independently. Hard deletion waits until both semantic
+indexes have released their external items. Provider upload, verify, and delete
+work is continued in pages of at most 200 items; the Queue consumer uses one
+message per invocation and at most six concurrent outbound operations. This
+keeps a legal 2,000-item note below Cloudflare's per-invocation subrequest and
+simultaneous-connection limits instead of failing halfway through indexing.
+Provider writes and deletes also use a leased per-item D1 token, so cleanup
+cannot pass an upload that is still in flight. When a crash leaves a mapping
+without its provider ID, the Worker resumes a D1-persisted scan of the official
+Items binding pages, compares exact keys, and confirms the recovered ID with an
+authoritative item-info read. It does not use the REST-only `key` list parameter,
+and a full scan miss remains pending rather than erasing the only cleanup handle.
+
+Set `SEMANTIC_BACKEND=vectorize` to select the old implementation deliberately;
+there is no per-request silent fallback when AI Search is unavailable. That
+keeps production failures distinct from genuine empty results and prevents a
+known lower-quality backend from contaminating evaluation. The old calibration
+and frozen datasets remain in `cloud/eval` for rollback validation.
 
 The Queue consumer must be idempotent because queue delivery is at least once. A stale indexing job verifies the note version/content hash before it writes vectors, and chunk IDs are derived from the note ID and content hash so a replay overwrites rather than duplicates. After D1 points at the new chunks, a separate delete job removes vectors from older content hashes; a deleted note has every chunk removed. A scheduled pass also deletes chunk vectors that no longer resolve to any note, because an orphan vector would otherwise consume candidate slots in every query. Queue enqueue failure is caught after the D1 transaction, leaves the note in a retryable state, and never turns a committed note mutation into a misleading HTTP 500. Cron retries pending, failed, stale-processing, model-drifted, content-hash-drifted, and chunk-less notes. Deleted notes are restorable for `TRASH_RETENTION_DAYS` (30 by default); after chunk cleanup and expiry, Cron permanently deletes their D1 rows and attached R2 objects.
 
@@ -367,7 +421,12 @@ curl http://localhost:8787/api/setup/status
 
 The Tauri development CSP permits localhost/127.0.0.1 API and image requests. The production CSP deliberately requires an HTTPS user-worker endpoint.
 
-Local D1 and basic routes can be tested without production data. Workers AI and Vectorize behavior may require authenticated remote resources depending on the Wrangler development mode. Never point automated local tests at a user's production instance.
+Local D1 and basic routes can be tested without production data. Workers AI,
+AI Search, and Vectorize behavior may require authenticated remote resources
+depending on the Wrangler development mode. Never point automated local tests
+at a user's production instance. The template intentionally omits
+`remote: true` from `AI_SEARCH`; use a separate Wrangler environment and isolated
+AI Search namespace when a maintainer explicitly needs live integration tests.
 
 ## 7. Deploy to Cloudflare button
 
@@ -398,10 +457,16 @@ Before exposing the button publicly:
 1. Run `npm run build:cloud-pwa` and confirm `cloud/public/` contains the current PWA.
 2. Push `cloud/` and the rest of this worktree to a public GitHub/GitLab branch; a local-only directory produces a 404 Deploy Button source URL.
 3. Keep `cloud/` fully isolated with its own lockfile, `wrangler.jsonc`, migrations, Worker source, package metadata, and static assets.
-4. Ensure Wrangler declares Static Assets, D1, R2, Vectorize, Workers AI, Queue producer/consumer, and the scheduled trigger.
+4. Ensure Wrangler declares Static Assets, D1, R2, the default AI Search
+   namespace, Vectorize, Workers AI, Queue producer/consumer, and the scheduled
+   trigger.
 5. Keep the deploy script's D1 migration command bound to `DB`, not a hard-coded database name or UUID.
 6. Confirm the template does not request a NotesFlash setup secret or another manually copied environment value.
-7. Run a clean deployment into a new Cloudflare account and verify the `notesflash-chunks` Vectorize index is created with 768 dimensions and cosine distance.
+7. Run a clean deployment and verify `notesflash-search` is created in the
+   `default` AI Search namespace with vector + keyword indexing, trigram
+   tokenization, RRF, query rewrite off, and reranking off. Also verify the
+   retained `notesflash-chunks` Vectorize index has 768 dimensions and cosine
+   distance.
 
 Example button Markdown:
 
@@ -413,7 +478,10 @@ Example button Markdown:
 
 The MVP connection screen uses that repository/subdirectory URL. Cloudflare
 currently supports isolated subdirectory templates and automatic provisioning
-for D1, R2, Vectorize, Workers AI, and Queues. The link remains unusable until
+for D1, R2, Vectorize, Workers AI, and Queues. AI Search is not listed separately
+in the Deploy Button provisioning table; NotesFlash instead binds the account's
+automatically available `default` namespace, which Wrangler can create if it is
+missing. The link remains unusable until
 the local implementation is committed and pushed to the public `main` branch;
 test it from a logged-out browser and a clean Cloudflare account before tagging
 a release.
@@ -594,9 +662,13 @@ The worker stores only a hash of each long-lived opaque session token. The curre
 
 Run this checklist against a brand-new Cloudflare account or an isolated test account:
 
-1. Deploy from the public button without using Wrangler locally.
-2. Confirm Static Assets, D1, R2, Vectorize, Workers AI, Queue, and Worker bindings exist; verify the root URL serves the PWA.
-3. Confirm all D1 migrations were applied.
+1. In a clean account, deploy from the public button without using Wrangler
+   locally. Confirm no AI Search API/service token value is requested by
+   NotesFlash; the built-in Items Workers binding does not require one.
+2. Confirm Static Assets, D1, R2, AI Search namespace, Vectorize, Workers AI,
+   Queue, and Worker bindings exist; verify the root URL serves the PWA.
+3. Confirm all D1 migrations were applied, including schema version 8 and the
+   `ai_search_items` manifest.
 4. Load `/setup` and confirm the GET alone does not initialize the instance or reveal a pairing code.
 5. Click the first-claim action and record the one-time code. Refresh the same browser, generate a replacement, and confirm the previous code is invalidated rather than shown again.
 6. Confirm a fresh browser without the HttpOnly bootstrap Cookie cannot replace the first code.
@@ -604,20 +676,30 @@ Run this checklist against a brand-new Cloudflare account or an isolated test ac
 8. Relaunch the app and confirm the saved connection session reconnects without persisting note content.
 9. Press `Command + Shift + Space`; confirm the existing window appears and the search input receives focus.
 10. Close the window, press the shortcut, and confirm the process was hidden rather than destroyed.
-11. Create a plain-text note; confirm the save response does not wait for embedding and still succeeds if Queue is temporarily unavailable.
+11. Create a plain-text note; confirm the save response does not wait for AI
+    Search or Vectorize indexing and still succeeds if Queue is temporarily
+    unavailable.
 12. Search by an exact character substring and confirm the lexical result appears.
-13. Search with a semantically similar phrase in the other language; confirm the result highlights the specific matched line, that `GET /api/search/status` reports a Vectorize vector count equal to the current chunk row count, and tune `SEMANTIC_MIN_COSINE` / `SEMANTIC_RELATIVE_MIN_RATIO` only against a corpus of representative positive and negative queries.
-14. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
-15. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
-16. Install the PWA from Safari and repeat read/search/image tests in standalone mode.
-17. Reuse a consumed pairing code and confirm it fails.
-18. Confirm an anonymous initialized `/setup` request cannot generate a new code, then create one from an authenticated connected device and pair the phone.
-19. Call `GET /api/devices`, revoke the phone with `DELETE /api/devices/:id`, and confirm its next request is rejected without affecting the Mac.
-20. Disconnect a test device, confirm `POST /api/auth/logout` returns success, and confirm reuse of the same token returns `401 AUTH_REQUIRED`.
-21. Send invalid pairing attempts until the configured window returns `429 RATE_LIMITED`.
-22. Upload/view an image and confirm its signed URL works without any user-supplied signing environment variable.
-23. Cause a stale note update with a different image list; confirm it returns `409 VERSION_CONFLICT` and the winning note's images remain unchanged.
-24. Temporarily disable or exhaust semantic indexing and confirm character search and note saving still work.
+13. Wait for the AI Search item manifest to become ready, then search `entry`
+    against a note containing `入口` and `migrate` against a note containing
+    `迁移`. Confirm hybrid RRF results highlight the exact current D1 line and
+    `GET /api/search/status` reports consistent anonymous item counts. Verify a
+    negative query remains empty and a provider outage produces an explicit
+    `503`, not a successful empty result.
+14. Temporarily set `SEMANTIC_BACKEND=vectorize`, verify the response identifies
+    `legacy-vectorize`, then restore `ai-search`; never test this by causing a
+    silent per-request fallback.
+15. Upload a supported image and confirm the authenticated image route displays it in both Mac and PWA.
+16. Confirm no note API response appears in browser Cache Storage, IndexedDB, or service-worker runtime cache.
+17. Install the PWA from Safari and repeat read/search/image tests in standalone mode.
+18. Reuse a consumed pairing code and confirm it fails.
+19. Confirm an anonymous initialized `/setup` request cannot generate a new code, then create one from an authenticated connected device and pair the phone.
+20. Call `GET /api/devices`, revoke the phone with `DELETE /api/devices/:id`, and confirm its next request is rejected without affecting the Mac.
+21. Disconnect a test device, confirm `POST /api/auth/logout` returns success, and confirm reuse of the same token returns `401 AUTH_REQUIRED`.
+22. Send invalid pairing attempts until the configured window returns `429 RATE_LIMITED`.
+23. Upload/view an image and confirm its signed URL works without any user-supplied signing environment variable.
+24. Cause a stale note update with a different image list; confirm it returns `409 VERSION_CONFLICT` and the winning note's images remain unchanged.
+25. Temporarily disable or exhaust AI Search indexing and confirm character search and note saving still work.
 
 ## 10. Release boundaries for this MVP
 

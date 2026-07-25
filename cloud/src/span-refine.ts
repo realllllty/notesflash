@@ -197,8 +197,14 @@ export async function refineSpans(
     // The anchor line follows the refined span so the client scrolls to the
     // line that is actually highlighted, not the start of the window.
     const newlinesBefore = (chunkText.slice(0, best.candidate.start).match(/\n/g) ?? []).length;
+    const newlinesInside = (
+      chunkText.slice(best.candidate.start, best.candidate.end).match(/\n/g) ?? []
+    ).length;
     if (target.hit.lineStart !== null) {
-      target.hit.primaryLine = target.hit.lineStart + newlinesBefore;
+      const refinedLineStart = target.hit.lineStart + newlinesBefore;
+      target.hit.primaryLine = refinedLineStart;
+      target.hit.lineStart = refinedLineStart;
+      target.hit.lineEnd = refinedLineStart + newlinesInside;
     }
     target.hit.charStart = chunkStart + best.candidate.start;
     target.hit.charEnd = chunkStart + best.candidate.end;

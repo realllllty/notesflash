@@ -5,10 +5,9 @@
  * here, so a value calibrated in the lab can be promoted by changing one
  * variable in `wrangler.jsonc` without touching code.
  *
- * Defaults are calibrated against the evaluation corpus in `cloud/eval`:
- * `@cf/google/embeddinggemma-300m` with line-window chunks reached R@1 93% /
- * R@3 100% with 100% line accuracy, and left a real score gap between the best
- * negative-query chunk (0.231) and the weakest true positive (0.345).
+ * The deployed defaults remain stable while `cloud/eval` separates calibration
+ * from a frozen short cross-language holdout. Synthetic `[EVAL:key]` title
+ * markers are stripped before embedding so future tuning cannot leak answers.
  */
 import { DEFAULT_CHUNKING, resolveChunkingOptions, type ChunkingOptions } from "./chunking";
 import {
@@ -30,6 +29,32 @@ export const DEFAULT_CHUNK_TOP_K = 40;
 const MAX_CHUNK_TOP_K = 100;
 const MAX_NOTE_TOP_K = 20;
 
+export interface ShortQueryRescueOptions {
+  /** Compare a second, contextual query view against the same chunk index. */
+  enabled: boolean;
+  /** Unicode code-point ceiling; avoids treating a long CJK query as "short". */
+  maxCodePoints: number;
+  /** Whitespace-delimited token ceiling for short natural-language phrases. */
+  maxTokens: number;
+  /** Raw-view floor below which the expanded view may never rescue a chunk. */
+  rawMinCosine: number;
+  /** Expanded-view floor; the expanded view is corroboration, never a union. */
+  expandedMinCosine: number;
+}
+
+/**
+ * Selected from production-safe score probes; the frozen short cross-language
+ * holdout is the release gate. The primary 0.3 floor remains unchanged. A lower
+ * raw score is admitted only when the contextual view finds the same chunk.
+ */
+export const DEFAULT_SHORT_QUERY_RESCUE: ShortQueryRescueOptions = {
+  enabled: true,
+  maxCodePoints: 24,
+  maxTokens: 3,
+  rawMinCosine: 0.235,
+  expandedMinCosine: 0.3,
+};
+
 export interface SemanticConfig {
   spec: EmbeddingModelSpec;
   instruction?: string;
@@ -37,6 +62,7 @@ export interface SemanticConfig {
   aggregation: AggregationOptions;
   /** Chunk candidates pulled from Vectorize before aggregation. */
   chunkTopK: number;
+  shortQueryRescue: ShortQueryRescueOptions;
   spanRefine: SpanRefineOptions;
 }
 
@@ -116,6 +142,52 @@ export function semanticConfig(env: Env): SemanticConfig {
     throw configurationError(`SEMANTIC_CHUNK_TOP_K must be between 1 and ${MAX_CHUNK_TOP_K}.`);
   }
 
+  const rescueRequested = booleanVar(
+    env.SEMANTIC_SHORT_QUERY_RESCUE,
+    "SEMANTIC_SHORT_QUERY_RESCUE",
+  ) ?? DEFAULT_SHORT_QUERY_RESCUE.enabled;
+  const shortQueryRescue: ShortQueryRescueOptions = {
+    // The score distribution was measured for EmbeddingGemma only. Other
+    // models stay on their primary path until they receive separate calibration.
+    enabled: spec.id === DEFAULT_EMBEDDING_MODEL && rescueRequested,
+    maxCodePoints: integerVar(
+      env.SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS,
+      "SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS",
+    ) ?? DEFAULT_SHORT_QUERY_RESCUE.maxCodePoints,
+    maxTokens: integerVar(
+      env.SEMANTIC_SHORT_QUERY_MAX_TOKENS,
+      "SEMANTIC_SHORT_QUERY_MAX_TOKENS",
+    ) ?? DEFAULT_SHORT_QUERY_RESCUE.maxTokens,
+    rawMinCosine: numberVar(
+      env.SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE,
+      "SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE",
+    ) ?? DEFAULT_SHORT_QUERY_RESCUE.rawMinCosine,
+    expandedMinCosine: numberVar(
+      env.SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE,
+      "SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE",
+    ) ?? DEFAULT_SHORT_QUERY_RESCUE.expandedMinCosine,
+  };
+  if (shortQueryRescue.maxCodePoints < 1 || shortQueryRescue.maxCodePoints > 2_000) {
+    throw configurationError("SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS must be between 1 and 2000.");
+  }
+  if (shortQueryRescue.maxTokens < 1 || shortQueryRescue.maxTokens > 100) {
+    throw configurationError("SEMANTIC_SHORT_QUERY_MAX_TOKENS must be between 1 and 100.");
+  }
+  if (shortQueryRescue.rawMinCosine < -1 || shortQueryRescue.rawMinCosine > 1) {
+    throw configurationError("SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE must be between -1 and 1.");
+  }
+  if (shortQueryRescue.expandedMinCosine < -1 || shortQueryRescue.expandedMinCosine > 1) {
+    throw configurationError("SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE must be between -1 and 1.");
+  }
+  if (
+    shortQueryRescue.enabled &&
+    shortQueryRescue.rawMinCosine >= aggregation.minCosine
+  ) {
+    throw configurationError(
+      "SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE must be below SEMANTIC_MIN_COSINE when rescue is enabled.",
+    );
+  }
+
   const spanRefine: SpanRefineOptions = {
     enabled: booleanVar(env.SEMANTIC_SPAN_REFINE, "SEMANTIC_SPAN_REFINE")
       ?? DEFAULT_SPAN_REFINE.enabled,
@@ -144,6 +216,7 @@ export function semanticConfig(env: Env): SemanticConfig {
     chunking,
     aggregation,
     chunkTopK,
+    shortQueryRescue,
     spanRefine,
   };
 }

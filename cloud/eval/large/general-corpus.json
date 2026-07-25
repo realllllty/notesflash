@@ -1,0 +1,607 @@
+{
+  "name": "general-large-corpus-v1",
+  "titlePrefix": "[EVAL:",
+  "comment": "A marker-free, domain-balanced corpus for broad semantic-search evaluation. Keys are metadata only and never occur in note titles or bodies.",
+  "notes": [
+    {
+      "key": "g001",
+      "title": "出门前的检查",
+      "body": "门口抽屉里放着一把备用钥匙。\n离家前关掉卧室的取暖器。\n垃圾袋在周二晚上放到楼下。"
+    },
+    {
+      "key": "g002",
+      "title": "Laundry notes",
+      "body": "Cold water keeps dark clothes from losing their color.\nWool sweaters should dry flat on a towel.\nThe quick cycle is enough for lightly worn shirts."
+    },
+    {
+      "key": "g003",
+      "title": "快递领取备忘",
+      "body": "包裹到站后会收到六位取件码。\n超过四十八小时未领取会转到人工柜台。\n大件物品要从地下车库旁边的门搬走。"
+    },
+    {
+      "key": "g004",
+      "title": "Calendar preferences",
+      "body": "New appointments use a fifteen minute reminder.\nRecurring events can be changed for one occurrence without editing the series.\nThe week view begins on Monday."
+    },
+    {
+      "key": "g005",
+      "title": "雨天随身物品",
+      "body": "折叠伞晾干后再放回背包侧袋。\n湿鞋里塞报纸可以更快吸走水分。\n办公桌抽屉留一双干袜子。"
+    },
+    {
+      "key": "g006",
+      "title": "Office visitor routine",
+      "body": "Guests collect a temporary badge from reception.\nThe side entrance stays locked after six in the evening.\nReturn the badge before leaving the building."
+    },
+    {
+      "key": "g007",
+      "title": "设备充电习惯",
+      "body": "手机电量到八成左右就可以拔掉充电线。\n长期不用的移动电源每三个月补一次电。\n发热明显时不要继续放在枕头下面充电。"
+    },
+    {
+      "key": "g008",
+      "title": "Grocery delivery instructions",
+      "body": "Leave chilled items with the concierge if nobody answers.\nSubstitute oat milk only when the original brand is unavailable.\nDo not replace the unsalted butter with a salted one."
+    },
+    {
+      "key": "g009",
+      "title": "照顾猫咪的说明",
+      "body": "早上七点和晚上六点各喂一次。\n饮水机的滤芯在水流变小时更换。\n如果躲在床底超过一天就联系宠物医院。"
+    },
+    {
+      "key": "g010",
+      "title": "Weekend errands",
+      "body": "Pick up the repaired shoes before noon.\nDrop glass bottles at the recycling center.\nAsk the pharmacy to renew the prescription.\nBuy envelopes for the tax documents.\nCollect the altered jacket from the tailor.\nThe library return slot remains open after the desk closes.\nTake the spare lamp to the donation shop.\nRefill the transit card at the station kiosk."
+    },
+    {
+      "key": "g011",
+      "title": "共享物品规则",
+      "body": "借走会议室转接头后要在当天放回原位。\n公共冰箱里的食物必须写上姓名和日期。\n最后离开的人负责关闭窗户。"
+    },
+    {
+      "key": "g012",
+      "title": "机场到市区",
+      "body": "机场巴士在三号出口外侧的蓝色站牌停靠。\n末班车晚上十一点四十分发车。\n上车后可以直接刷交通卡。"
+    },
+    {
+      "key": "g013",
+      "title": "Regional train changes",
+      "body": "Platform assignments may change ten minutes before departure.\nThe front two carriages continue to the coastal branch.\nValidate paper tickets in the yellow machine."
+    },
+    {
+      "key": "g014",
+      "title": "随身行李限制",
+      "body": "经济舱可以携带一个七公斤的登机箱。\n液体容器单瓶不能超过一百毫升。\n充电宝必须随身携带，不能托运。"
+    },
+    {
+      "key": "g015",
+      "title": "Visa appointment checklist",
+      "body": "Bring the original passport and one photocopy of the photo page.\nBank statements must cover the most recent three months.\nArrive no earlier than twenty minutes before the reserved time."
+    },
+    {
+      "key": "g016",
+      "title": "酒店入住事项",
+      "body": "前台会预授权一晚房费作为押金。\n退房时间是上午十一点，可以免费延迟半小时。\n行李寄存处在大厅电梯后面。"
+    },
+    {
+      "key": "g017",
+      "title": "Mountain trail plan",
+      "body": "Take the shaded eastern path during the afternoon.\nThe final water source is beside the old stone bridge.\nAllow six hours for the full loop in dry weather."
+    },
+    {
+      "key": "g018",
+      "title": "交通卡退款",
+      "body": "离境前可以在中央车站退回卡内余额。\n窗口会扣除少量手续费。\n手机虚拟卡需要在应用内提交退款。"
+    },
+    {
+      "key": "g019",
+      "title": "Roaming and mobile data",
+      "body": "Install the digital SIM profile while connected to reliable Wi-Fi.\nKeep the home number enabled for incoming verification messages.\nDisable automatic photo backup when using metered data."
+    },
+    {
+      "key": "g020",
+      "title": "北部环线十日安排",
+      "body": "第一天在港口附近休息。\n第二天参观旧城区和钟楼。\n第三天乘早班火车到山谷。\n第四天沿湖骑行。\n第五天预留给雨天调整。\n第六天前往国家公园。\n第七天参加峡湾游船。\n第八天回到首府采购纪念品。\n第九天下午在中央市场旁做抗原检测。\n第十天清晨前往机场。"
+    },
+    {
+      "key": "g021",
+      "title": "Connecting flight notes",
+      "body": "The airline recommends at least ninety minutes between international flights.\nChecked bags transfer automatically when both legs share one ticket.\nFollow the purple signs for the satellite terminal."
+    },
+    {
+      "key": "g022",
+      "title": "旅行保险理赔",
+      "body": "航班延误超过六小时才可以申请固定补偿。\n提交时需要登机牌和航空公司的延误证明。\n行李损坏要在离开机场前完成登记。"
+    },
+    {
+      "key": "g023",
+      "title": "服药时间记录",
+      "body": "这片药要随早餐一起服用，避免空腹不适。\n漏服后不要在下一次加倍。\n出现持续皮疹就停止服用并联系医生。"
+    },
+    {
+      "key": "g024",
+      "title": "Dental follow-up",
+      "body": "Sensitivity to cold should fade within two weeks after the filling.\nUse the soft brush around the treated gum.\nCall the clinic if biting causes sharp pain."
+    },
+    {
+      "key": "g025",
+      "title": "疫苗冷藏提醒",
+      "body": "未开封的药剂要保存在二到八摄氏度。\n运输途中放入保温袋，但不能直接接触冰块。\n温度超出范围后先咨询药师再使用。"
+    },
+    {
+      "key": "g026",
+      "title": "Sleep reset plan",
+      "body": "Wake at the same time even after a poor night.\nAvoid bright screens during the final hour before bed.\nMorning daylight helps move the body clock earlier."
+    },
+    {
+      "key": "g027",
+      "title": "脚踝康复动作",
+      "body": "先用弹力带做缓慢的外翻练习。\n单脚站立三十秒，疼痛明显就停止。\n恢复跑步前要能连续完成二十次提踵。"
+    },
+    {
+      "key": "g028",
+      "title": "Allergy symptom diary",
+      "body": "Record meals, skin reactions, and the time between them.\nChange only one suspected food at a time.\nBreathing difficulty requires urgent medical help."
+    },
+    {
+      "key": "g029",
+      "title": "屏幕用眼习惯",
+      "body": "每工作二十分钟就看远处二十秒。\n显示器上沿略低于眼睛更舒服。\n干涩时先增加眨眼频率和室内湿度。"
+    },
+    {
+      "key": "g030",
+      "title": "Annual blood test notes",
+      "body": "The sample was taken after an overnight fast.\nRed cell count remained inside the reference range.\nVitamin D was slightly below the laboratory target.\nThe clinician suggested more daylight exposure.\nKidney markers were unchanged from last year.\nThe lipid panel should be repeated in six months.\nIron stores improved after the diet change.\nThyroid values did not require treatment."
+    },
+    {
+      "key": "g031",
+      "title": "门诊预约准备",
+      "body": "提前整理最近三个月的症状时间线。\n带上正在服用的所有药物清单。\n复诊时向医生确认是否需要调整剂量。"
+    },
+    {
+      "key": "g032",
+      "title": "Hydration during exercise",
+      "body": "Drink small amounts regularly instead of a large volume at once.\nLong sessions in hot weather may require electrolytes.\nVery clear urine all day can indicate excessive intake."
+    },
+    {
+      "key": "g033",
+      "title": "偏头痛诱因",
+      "body": "睡眠时间突然改变容易触发头痛。\n连续空腹和强烈气味也可能是诱因。\n记录发作前二十四小时的活动有助于找规律。"
+    },
+    {
+      "key": "g034",
+      "title": "主动回忆的复习节奏",
+      "body": "新知识当天先回忆一次，再逐渐拉长复习间隔。\n答错的卡片应该更早重新出现。\n每次先尝试主动回答，再查看答案。"
+    },
+    {
+      "key": "g035",
+      "title": "Professor office hours",
+      "body": "Bring one specific question rather than asking for a full lecture recap.\nThe Thursday session is online by appointment.\nDraft feedback is available only before the submission deadline."
+    },
+    {
+      "key": "g036",
+      "title": "参考文献格式",
+      "body": "网页资料需要写明作者、页面标题和访问日期。\n正文中的直接引语必须标出页码。\n同一作者同一年出版的作品用字母区分。"
+    },
+    {
+      "key": "g037",
+      "title": "Exam room checklist",
+      "body": "A photo identification card must remain visible on the desk.\nOnly transparent water bottles are allowed.\nLate arrivals receive no extra time."
+    },
+    {
+      "key": "g038",
+      "title": "小组作业分工",
+      "body": "每个人先独立写出一个方案，再开会合并。\n最终提交前由没有写该段的人交叉检查。\n缺席成员要在当天补充进度说明。"
+    },
+    {
+      "key": "g039",
+      "title": "Vocabulary practice",
+      "body": "Attach each new word to a sentence from real life.\nMix recognition cards with prompts that require production.\nReview similar-looking terms side by side only after they are familiar."
+    },
+    {
+      "key": "g040",
+      "title": "退课流程",
+      "body": "学期第四周前退课不会出现在成绩单上。\n超过截止日期需要学院批准。\n奖学金学生要先确认最低学分要求。"
+    },
+    {
+      "key": "g041",
+      "title": "Lecture notes on learning",
+      "body": "Working memory has a limited capacity.\nExamples should vary after the basic pattern is understood.\nFrequent low stakes testing improves later recall.\nFeedback works best when it identifies the next action.\nInterleaving helps students distinguish similar problem types.\nA concept map should show relationships rather than decorate terms.\nSleep after practice supports consolidation.\nExplaining an idea aloud reveals hidden gaps."
+    },
+    {
+      "key": "g042",
+      "title": "实验室安全须知",
+      "body": "稀释强酸时必须把酸缓慢加入水中。\n离开实验台前摘掉手套再碰门把手。\n不明液体要按危险废物处理。"
+    },
+    {
+      "key": "g043",
+      "title": "Academic transcript request",
+      "body": "Digital copies arrive within three business days.\nSealed paper copies can be collected from the registrar.\nOutstanding library fees may delay processing."
+    },
+    {
+      "key": "g044",
+      "title": "论文阅读顺序",
+      "body": "先看摘要和图表判断是否值得精读。\n方法部分重点检查数据来源和假设。\n最后用自己的话写出作者真正证明了什么。"
+    },
+    {
+      "key": "g045",
+      "title": "银行卡遗失处理",
+      "body": "找不到卡片时先在手机银行暂停交易。\n确认遗失后再申请补发新卡。\n挂失不会自动取消已经绑定的定期付款。"
+    },
+    {
+      "key": "g046",
+      "title": "Pending bank transfer",
+      "body": "International payments may remain under review for two business days.\nCheck that the recipient name matches the account record exactly.\nA rejected transfer returns without the outgoing bank fee."
+    },
+    {
+      "key": "g047",
+      "title": "月度预算方法",
+      "body": "工资到账后先分别预留住房、饮食和交通费用。\n没有花完的娱乐额度可以滚到下个月。\n临时奖金不计入固定支出的上限。"
+    },
+    {
+      "key": "g048",
+      "title": "Tax receipt archive",
+      "body": "Scan deductible invoices before the thermal paper fades.\nStore each file under the year when the expense occurred.\nKeep proof of payment beside the vendor receipt."
+    },
+    {
+      "key": "g049",
+      "title": "债券到期记录",
+      "body": "这笔固定收益产品在九月三十日返还本金。\n利息每半年支付一次。\n提前出售会受到市场价格波动影响。"
+    },
+    {
+      "key": "g050",
+      "title": "Credit report correction",
+      "body": "Dispute an unfamiliar account with both the bureau and the lender.\nAttach statements showing the correct payment history.\nThe investigation normally finishes within thirty days."
+    },
+    {
+      "key": "g051",
+      "title": "外币消费费用",
+      "body": "这张卡不收境外交易附加费。\n商户询问币种时选择当地货币结算。\n取现仍然会产生固定手续费。"
+    },
+    {
+      "key": "g052",
+      "title": "Employee expense policy",
+      "body": "Meals require an itemized receipt.\nPersonal upgrades are never reimbursed.\nTaxi costs need a short business purpose.\nClaims should be submitted within thirty days.\nHotel internet is covered when needed for work.\nThe company pays the standard rail fare.\nA manager must approve any conference fee above five hundred dollars.\nCurrency conversion uses the card statement amount."
+    },
+    {
+      "key": "g053",
+      "title": "退休账户设置",
+      "body": "每月工资的百分之六自动转入长期投资账户。\n雇主会按相同比例匹配到百分之三。\n调整比例后从下一次发薪开始生效。"
+    },
+    {
+      "key": "g054",
+      "title": "Dividend schedule",
+      "body": "Shares must be owned before the ex-dividend date to receive the next payment.\nThe cash normally reaches the account two weeks later.\nReinvestment purchases fractional shares automatically."
+    },
+    {
+      "key": "g055",
+      "title": "订阅服务盘点",
+      "body": "每季度检查一次自动续费项目。\n连续两个月没使用的服务先暂停。\n年度套餐只有在确定长期使用时才划算。"
+    },
+    {
+      "key": "g056",
+      "title": "租客搬离通知",
+      "body": "准备退租时要提前三十天书面告知房东。\n邮件中写明最后居住日期和转寄地址。\n交还钥匙时要求出具收据。"
+    },
+    {
+      "key": "g057",
+      "title": "Online purchase cancellation",
+      "body": "The cooling-off period lasts fourteen days after delivery.\nCustom-made goods are excluded from this right.\nNotify the seller clearly before sending anything back."
+    },
+    {
+      "key": "g058",
+      "title": "照片版权说明",
+      "body": "拍摄者通常在按下快门时取得作品版权。\n购买照片实体并不等于获得复制权。\n商业使用人物肖像还可能需要授权。"
+    },
+    {
+      "key": "g059",
+      "title": "Small claims filing",
+      "body": "Send a written demand before starting the court case.\nFile in the county where the defendant lives or the dispute occurred.\nBring copies of every document for the judge and the other party."
+    },
+    {
+      "key": "g060",
+      "title": "隐私同意规则",
+      "body": "收集非必要信息前要取得清晰且可撤回的同意。\n拒绝营销用途不能影响核心服务。\n默认勾选的选项不算主动授权。"
+    },
+    {
+      "key": "g061",
+      "title": "Confidentiality agreement notes",
+      "body": "Trade secret duties can continue after employment ends.\nPublicly known information is outside the agreement.\nA court order may require disclosure despite the promise."
+    },
+    {
+      "key": "g062",
+      "title": "停车罚单申诉",
+      "body": "标志被树枝遮挡时要拍下当时的现场照片。\n申诉必须在通知日期后的二十一天内提交。\n不要先付款，否则系统可能视为接受处罚。"
+    },
+    {
+      "key": "g063",
+      "title": "Probate document copies",
+      "body": "Certified copies of the death certificate are needed for several institutions.\nThe executor may request them from the records office.\nOrdinary photocopies are often refused by banks."
+    },
+    {
+      "key": "g064",
+      "title": "加班工时记录",
+      "body": "雇员应每天记录实际开始和结束工作的时间。\n经理口头要求的额外任务也要计入。\n是否免于加班费取决于职责而不是职位名称。"
+    },
+    {
+      "key": "g065",
+      "title": "Service contract review",
+      "body": "The agreement renews for another year unless canceled in writing.\nPrice changes require sixty days of notice.\nSupport hours exclude public holidays.\nData exports are available in a common machine-readable format.\nThe provider may suspend accounts for unpaid invoices.\nLiability is limited to fees paid during the previous twelve months.\nDisputes must first go through informal negotiation.\nTermination does not erase accrued payment obligations."
+    },
+    {
+      "key": "g066",
+      "title": "无人机飞行限制",
+      "body": "机场周边的限制区域需要事先许可。\n在人群上方飞行必须满足额外安全条件。\n拍摄私人住宅仍要考虑隐私权。"
+    },
+    {
+      "key": "g067",
+      "title": "暖气片排气",
+      "body": "上半部冰凉而下半部温热时可能积了空气。\n关闭供暖后用小钥匙慢慢打开排气阀。\n有水稳定流出就立刻关紧。"
+    },
+    {
+      "key": "g068",
+      "title": "Bathroom mold cleanup",
+      "body": "Fix the moisture source before treating the stained surface.\nWear gloves and keep the window open during cleaning.\nA large recurring patch may require professional inspection."
+    },
+    {
+      "key": "g069",
+      "title": "配电箱标签",
+      "body": "逐个关闭开关并记录对应的房间和插座。\n冰箱和网络设备所在回路单独标注。\n潮湿区域跳闸后先找电工检查。"
+    },
+    {
+      "key": "g070",
+      "title": "Rental inspection preparation",
+      "body": "Photograph existing scratches before moving furniture in.\nTest every window latch with the agent present.\nSend missing defects by email the same day."
+    },
+    {
+      "key": "g071",
+      "title": "室内植物位置",
+      "body": "琴叶榕放在明亮但没有午后直射光的位置。\n每周转动花盆四分之一圈。\n叶片积灰后用湿布轻轻擦拭。"
+    },
+    {
+      "key": "g072",
+      "title": "Smoke alarm maintenance",
+      "body": "Press the test button once every month.\nReplace removable batteries when the low-power chirp begins.\nThe entire detector should be renewed after ten years."
+    },
+    {
+      "key": "g073",
+      "title": "水管漏水应急",
+      "body": "先顺时针关闭厨房水槽下方的总阀。\n用毛巾接住残留水并移开附近电器。\n拍照记录损坏后联系物业。"
+    },
+    {
+      "key": "g074",
+      "title": "Furniture measurement guide",
+      "body": "Measure the narrowest doorway before ordering a sofa.\nInclude the diagonal depth when checking tight corners.\nLeave enough clearance for drawers to open fully."
+    },
+    {
+      "key": "g075",
+      "title": "无线路由器摆放",
+      "body": "设备放在住宅中央的开放位置覆盖更均匀。\n不要藏在金属柜里或紧贴微波炉。\n楼层之间尽量靠近楼梯井。"
+    },
+    {
+      "key": "g076",
+      "title": "Apartment renovation log",
+      "body": "Protect the hallway floor before materials arrive.\nConfirm quiet hours with the building manager.\nMark every hidden pipe before drilling.\nKeep one bathroom usable throughout the work.\nCheck tile batches under the same lighting.\nPhotograph electrical wiring before the walls close.\nLet fresh plaster dry fully before painting.\nStore spare matching tiles for future repairs."
+    },
+    {
+      "key": "g077",
+      "title": "搬家纸箱标记",
+      "body": "箱子侧面同时写房间和主要内容。\n第一晚要用的物品装进红色标签箱。\n书本分散到小箱子避免超重。"
+    },
+    {
+      "key": "g078",
+      "title": "面包发酵判断",
+      "body": "手指轻按面团后缓慢回弹说明可以烘烤。\n室温较低时不要只按固定时间判断。\n过度膨胀的面团容易在炉中塌陷。"
+    },
+    {
+      "key": "g079",
+      "title": "Cooking rice reliably",
+      "body": "Rinse until the water is only slightly cloudy.\nLet the cooked grains rest covered for ten minutes.\nUse a little less water for newly harvested rice."
+    },
+    {
+      "key": "g080",
+      "title": "手冲咖啡研磨",
+      "body": "流速太快而味道偏淡时把颗粒调细。\n出现明显苦涩和堵塞时稍微调粗。\n每次只改变一个参数再比较。"
+    },
+    {
+      "key": "g081",
+      "title": "Leftover food safety",
+      "body": "Refrigerate cooked dishes within two hours.\nReheat only the portion that will be eaten.\nDiscard anything with an uncertain storage history."
+    },
+    {
+      "key": "g082",
+      "title": "豆腐入味方法",
+      "body": "先压出多余水分再切块。\n酱汁里加入少量淀粉更容易附着。\n煎到表面金黄后再小火焖几分钟。"
+    },
+    {
+      "key": "g083",
+      "title": "Baking without eggs",
+      "body": "Ground flax mixed with water can bind a dense muffin batter.\nAquafaba works better when a light foam is needed.\nNeither substitute provides the same richness as yolk."
+    },
+    {
+      "key": "g084",
+      "title": "冷冻食品标签",
+      "body": "包装上写清食物名称和冷冻日期。\n汤汁要留出膨胀空间。\n先放进去的食物摆在抽屉前方。"
+    },
+    {
+      "key": "g085",
+      "title": "Kitchen knife care",
+      "body": "A honing rod realigns the edge but does not remove much metal.\nUse a whetstone when the blade no longer responds to honing.\nDry carbon steel immediately after washing."
+    },
+    {
+      "key": "g086",
+      "title": "家庭聚餐准备表",
+      "body": "三天前确认人数和过敏信息。\n前一晚完成可以冷藏的甜点。\n当天上午切好耐放的蔬菜。\n客人到达前一小时开始烤主菜。\n清蒸鱼要等所有人落座后再下锅。\n饮料分别准备含糖和无糖版本。\n热菜盘提前用温水预热。\n剩余食物在餐后两小时内分装冷藏。"
+    },
+    {
+      "key": "g087",
+      "title": "Tea brewing temperatures",
+      "body": "Delicate green leaves taste sweeter with cooler water.\nBlack tea tolerates a full boil.\nShort repeated infusions suit tightly rolled oolong."
+    },
+    {
+      "key": "g088",
+      "title": "手擀面记录",
+      "body": "面团揉好后至少醒三十分钟。\n擀开时从中心向外用力。\n切好的面条撒淀粉防止粘连。"
+    },
+    {
+      "key": "g089",
+      "title": "蓝调时刻拍摄",
+      "body": "日落后天空仍有颜色时使用三脚架。\n手动白平衡可以保持不同画面色调一致。\n先保住高光，再适度提亮阴影。"
+    },
+    {
+      "key": "g090",
+      "title": "Portrait focus setup",
+      "body": "Enable eye detection for a moving subject.\nUse a single point when foreground objects confuse the camera.\nContinuous autofocus helps when distance keeps changing."
+    },
+    {
+      "key": "g091",
+      "title": "原始照片备份",
+      "body": "导入后先复制到本地硬盘和异地存储。\n确认两个副本都能打开再格式化存储卡。\n按拍摄日期建立目录，不依赖相机文件名。"
+    },
+    {
+      "key": "g092",
+      "title": "Traveling with film",
+      "body": "Ask for a hand inspection when carrying high-speed film.\nKeep rolls outside checked baggage because stronger scanners may be used.\nA clear bag makes the request faster at security."
+    },
+    {
+      "key": "g093",
+      "title": "室内闪光灯用法",
+      "body": "把灯头转向白色天花板能得到更柔和的光。\n天花板颜色很深时改用侧墙或柔光罩。\n人物离背景远一点可以减少硬阴影。"
+    },
+    {
+      "key": "g094",
+      "title": "Reading the histogram",
+      "body": "A graph touching the right edge may indicate lost highlight detail.\nThe shape alone does not define a correct exposure.\nCheck individual color channels under saturated lighting."
+    },
+    {
+      "key": "g095",
+      "title": "镜头起雾处理",
+      "body": "从寒冷室外进入温暖房间前先装进密封袋。\n让器材缓慢升温后再打开。\n不要用热风直接吹玻璃表面。"
+    },
+    {
+      "key": "g096",
+      "title": "Monitor color workflow",
+      "body": "Calibrate under the lighting used for editing.\nReduce excessive screen brightness before preparing prints.\nRepeat the measurement every few months."
+    },
+    {
+      "key": "g097",
+      "title": "婚礼拍摄清单",
+      "body": "提前拍摄场地空镜。\n记录双方家庭成员的合影组合。\n交换戒指时保持第二机位对准双手。\n仪式结束后立即备份第一张存储卡。\n宴会入口准备广角镜头。\n致辞时分别捕捉说话者和听众反应。\n蛋糕切开前拍完整装饰。\n离场前检查是否遗漏灯架。"
+    },
+    {
+      "key": "g098",
+      "title": "Street photography etiquette",
+      "body": "Respect a clear request not to be photographed.\nAsk permission before making a close portrait of a child.\nPublic access does not remove every expectation of privacy."
+    },
+    {
+      "key": "g099",
+      "title": "全景照片拼接",
+      "body": "相邻画面保留大约三分之一重叠。\n锁定曝光和白平衡避免接缝变化。\n旋转时尽量保持镜头节点位置稳定。"
+    },
+    {
+      "key": "g100",
+      "title": "博物馆参观安排",
+      "body": "周五晚常设展厅延长开放到九点。\n最后入场时间比闭馆早四十五分钟。\n大型背包需要寄存在地下层。"
+    },
+    {
+      "key": "g101",
+      "title": "Theatre accessibility",
+      "body": "Selected performances provide translated captions above the stage.\nAudio description headsets can be reserved without charge.\nStep-free seating is entered through the east lobby."
+    },
+    {
+      "key": "g102",
+      "title": "读书会讨论方式",
+      "body": "每个人先选一段最有争议的内容。\n发言时区分作者观点和自己的判断。\n没有读完也可以带着具体问题参加。"
+    },
+    {
+      "key": "g103",
+      "title": "Storing calligraphy works",
+      "body": "Keep paper away from direct sunlight and high humidity.\nUse acid-free interleaving sheets between mounted pieces.\nRoll large works loosely around a wide core."
+    },
+    {
+      "key": "g104",
+      "title": "歌剧院选座",
+      "body": "字幕屏在舞台上方，过近的前排需要频繁抬头。\n二层中央能更均衡地听到乐队。\n侧包厢可能看不到舞台边缘。"
+    },
+    {
+      "key": "g105",
+      "title": "Festival host customs",
+      "body": "Bring a small shared gift rather than something expensive.\nWait for the host to indicate where shoes should be left.\nServe elders before filling your own plate."
+    },
+    {
+      "key": "g106",
+      "title": "考古展览笔记",
+      "body": "陶片的年代通过地层位置和类型学共同判断。\n修复部分使用不同纹理以免混淆原件。\n展柜湿度会根据材料种类调整。"
+    },
+    {
+      "key": "g107",
+      "title": "Poetry rhythm notes",
+      "body": "Meter describes a recurring pattern of stressed and unstressed beats.\nA substitution can interrupt the pattern for emphasis.\nLine breaks and metrical units do not always coincide."
+    },
+    {
+      "key": "g108",
+      "title": "室内乐排练记录",
+      "body": "先统一第一乐章开头的速度。\n大提琴在第二主题稍微减少揉弦。\n钢琴踏板要避开低音快速经过句。\n第三乐章转调前一起呼吸。\n小提琴独奏结束后不要立刻加速。\n返场曲从弱奏开始。\n最后一次排练按演出座位摆放。\n录音设备放在观众席第六排中央。"
+    },
+    {
+      "key": "g109",
+      "title": "Artwork provenance file",
+      "body": "Keep purchase invoices together with exhibition history.\nRecord every transfer of ownership in chronological order.\nA laboratory report supports but does not replace documentary evidence."
+    },
+    {
+      "key": "g110",
+      "title": "地方方言记录",
+      "body": "同一个词在沿海村落和山区的声调不同。\n访谈时保留说话人的原始停顿。\n转写稿要另外标注普通话释义。"
+    },
+    {
+      "key": "g111",
+      "title": "流星雨观测",
+      "body": "远离城市灯光后让眼睛适应黑暗二十分钟。\n不需要望远镜，直接观察更大的天空范围。\n辐射点升高后通常能看到更多流星。"
+    },
+    {
+      "key": "g112",
+      "title": "PCR contamination controls",
+      "body": "Prepare reaction mixtures in a space separate from amplified samples.\nInclude a no-template control in every run.\nChange gloves after touching shared equipment."
+    },
+    {
+      "key": "g113",
+      "title": "望远镜温度适应",
+      "body": "观测前把镜筒放到室外降温至少半小时。\n镜内热流会让高倍图像不断晃动。\n结露严重时盖上镜盖并缓慢回温。"
+    },
+    {
+      "key": "g114",
+      "title": "Testing garden soil",
+      "body": "Combine small samples from several spots before measuring acidity.\nDo not test immediately after adding fertilizer.\nMost vegetables prefer a slightly acidic to neutral range."
+    },
+    {
+      "key": "g115",
+      "title": "电池材料学习",
+      "body": "磷酸铁锂体系热稳定性较好。\n低温会减慢离子移动并降低可用容量。\n长期保持满电会加速某些化学体系老化。"
+    },
+    {
+      "key": "g116",
+      "title": "Interpreting confidence intervals",
+      "body": "A narrower interval represents a more precise estimate under the model.\nNinety-five percent does not describe the probability of this fixed interval.\nLarger random samples usually reduce the standard error."
+    },
+    {
+      "key": "g117",
+      "title": "天气与气候区别",
+      "body": "天气描述较短时间内的大气状态。\n气候关注多年统计出的典型范围和变化。\n一次寒潮不能单独否定长期升温趋势。"
+    },
+    {
+      "key": "g118",
+      "title": "Wetland field notebook",
+      "body": "Record the exact sampling location before collecting water.\nRinse the probe with site water between measurements.\nPhotograph the bank from the same angle each visit.\nNote recent rainfall because it changes turbidity.\nCount calling frogs for ten minutes after sunset.\nStore nutrient samples in a chilled dark container.\nMeasure dissolved oxygen before disturbing the sediment.\nUpload observations only after checking species names."
+    },
+    {
+      "key": "g119",
+      "title": "显微镜油镜操作",
+      "body": "只有最高倍油浸物镜需要滴专用镜油。\n观察结束后立即用镜头纸轻轻擦净。\n不要让低倍干式物镜碰到油。"
+    },
+    {
+      "key": "g120",
+      "title": "Tracking bird migration",
+      "body": "Morning headwinds often concentrate birds near the shoreline.\nRecord flock direction as well as species and count.\nColored leg bands can identify individuals seen in different countries."
+    }
+  ]
+}

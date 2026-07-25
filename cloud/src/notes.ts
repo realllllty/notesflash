@@ -39,9 +39,9 @@ async function tryEnqueueIndexJob(
     return true;
   } catch (error) {
     // D1 is the source of truth. A Queue outage must not turn a committed note
-    // mutation into a misleading HTTP 500. Pending embeddings are retried by
-    // the scheduled repair job; deleted vectors retain their ID for the same
-    // repair path until a delete job has been accepted by Queue.
+    // mutation into a misleading HTTP 500. Pending Vectorize and AI Search work
+    // is retried by the scheduled repair job; deletion rows retain the provider
+    // identifiers needed by that same repair path.
     console.error("Could not enqueue index job", context.requestId, job.type, job.noteId, error);
     return false;
   }
@@ -62,6 +62,44 @@ async function enqueueEmbedding(
     createdAt: Date.now(),
   };
   return tryEnqueueIndexJob(context, job);
+}
+
+function aiSearchEnabled(context: RequestContext): boolean {
+  return context.env.AI_SEARCH_ENABLED === "true" ||
+    context.env.SEMANTIC_BACKEND?.trim() === "ai-search";
+}
+
+async function enqueueAiSearchSync(
+  context: RequestContext,
+  noteId: string,
+  version: number,
+  hash: string,
+  options: { force?: boolean } = {},
+): Promise<boolean> {
+  // Turning off live AI Search maintenance must not strand provider items
+  // written while the backend was enabled. Deletions therefore force a cleanup
+  // job; the consumer can disable an empty manifest without opening AI Search.
+  if (!options.force && !aiSearchEnabled(context)) return true;
+  return tryEnqueueIndexJob(context, {
+    type: "sync-ai-search-note",
+    eventId: newId(),
+    noteId,
+    version,
+    contentHash: hash,
+    createdAt: Date.now(),
+  });
+}
+
+async function enqueueSearchIndexes(
+  context: RequestContext,
+  noteId: string,
+  version: number,
+  hash: string,
+): Promise<void> {
+  await Promise.all([
+    enqueueEmbedding(context, noteId, version, hash),
+    enqueueAiSearchSync(context, noteId, version, hash),
+  ]);
 }
 
 async function safelyValidateImages(
@@ -170,7 +208,7 @@ export async function createNote(context: RequestContext): Promise<Response> {
   }
 
   await context.env.DB.batch(statements);
-  await enqueueEmbedding(context, noteId, 1, hash);
+  await enqueueSearchIndexes(context, noteId, 1, hash);
   const note = await getNote(context.env, noteId);
   return json({ note }, 201);
 }
@@ -229,6 +267,23 @@ export async function updateNote(context: RequestContext, noteId: string): Promi
          embedding_error_code = CASE
            WHEN content_hash = ? THEN embedding_error_code
            ELSE NULL
+         END,
+         ai_search_status = CASE
+           WHEN content_hash = ? THEN ai_search_status
+           WHEN ai_search_status = 'disabled' THEN 'disabled'
+           ELSE 'pending'
+         END,
+         ai_search_indexed_content_hash = CASE
+           WHEN content_hash = ? THEN ai_search_indexed_content_hash
+           ELSE NULL
+         END,
+         ai_search_updated_at = CASE
+           WHEN content_hash = ? THEN ai_search_updated_at
+           ELSE NULL
+         END,
+         ai_search_error_code = CASE
+           WHEN content_hash = ? THEN ai_search_error_code
+           ELSE NULL
          END
        WHERE id = ? AND version = ? AND deleted_at IS NULL`,
     ).bind(
@@ -239,6 +294,10 @@ export async function updateNote(context: RequestContext, noteId: string): Promi
       hash,
       now,
       mutationId,
+      hash,
+      hash,
+      hash,
+      hash,
       hash,
       hash,
       noteId,
@@ -294,7 +353,7 @@ export async function updateNote(context: RequestContext, noteId: string): Promi
   }
 
   if (hash !== current.content_hash) {
-    await enqueueEmbedding(context, noteId, nextVersion, hash);
+    await enqueueSearchIndexes(context, noteId, nextVersion, hash);
   }
   const note = await getNote(context.env, noteId);
   return json({ note });
@@ -312,7 +371,9 @@ export async function deleteNote(context: RequestContext, noteId: string): Promi
   const now = Date.now();
   const result = await context.env.DB.prepare(
     `UPDATE notes
-     SET deleted_at = ?, updated_at = ?, version = version + 1
+     SET deleted_at = ?, updated_at = ?, version = version + 1,
+         ai_search_status = 'pending', ai_search_updated_at = NULL,
+         ai_search_error_code = NULL
      WHERE id = ? AND version = ? AND deleted_at IS NULL`,
   )
     .bind(now, now, noteId, baseVersion)
@@ -328,6 +389,13 @@ export async function deleteNote(context: RequestContext, noteId: string): Promi
     vectorId: current.embedding_vector_id,
     createdAt: now,
   });
+  await enqueueAiSearchSync(
+    context,
+    noteId,
+    baseVersion + 1,
+    current.content_hash,
+    { force: true },
+  );
   return json({ ok: true });
 }
 
@@ -340,7 +408,10 @@ export async function restoreNote(context: RequestContext, noteId: string): Prom
   const now = Date.now();
   const result = await context.env.DB.prepare(
     `UPDATE notes SET
-       deleted_at = NULL, updated_at = ?, version = version + 1, embedding_status = 'pending'
+       deleted_at = NULL, updated_at = ?, version = version + 1,
+       embedding_status = 'pending',
+       ai_search_status = 'pending', ai_search_indexed_content_hash = NULL,
+       ai_search_updated_at = NULL, ai_search_error_code = NULL
      WHERE id = ? AND deleted_at IS NOT NULL`,
   )
     .bind(now, noteId)
@@ -348,6 +419,6 @@ export async function restoreNote(context: RequestContext, noteId: string): Prom
   if ((result.meta.changes ?? 0) < 1) {
     throw new AppError(409, "RESTORE_CONFLICT", "The note could not be restored.");
   }
-  await enqueueEmbedding(context, noteId, current.version + 1, current.content_hash);
+  await enqueueSearchIndexes(context, noteId, current.version + 1, current.content_hash);
   return json({ note: await getNote(context.env, noteId) });
 }

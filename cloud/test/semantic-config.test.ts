@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CHUNKING } from "../src/chunking";
-import { DEFAULT_CHUNK_TOP_K, semanticConfig } from "../src/semantic-config";
+import {
+  DEFAULT_CHUNK_TOP_K,
+  DEFAULT_SHORT_QUERY_RESCUE,
+  semanticConfig,
+} from "../src/semantic-config";
 import { DEFAULT_AGGREGATION } from "../src/semantic-core";
 import type { Env } from "../src/types";
 
@@ -18,6 +22,7 @@ describe("semanticConfig", () => {
     expect(config.chunking).toEqual(DEFAULT_CHUNKING);
     expect(config.aggregation).toEqual(DEFAULT_AGGREGATION);
     expect(config.chunkTopK).toBe(DEFAULT_CHUNK_TOP_K);
+    expect(config.shortQueryRescue).toEqual(DEFAULT_SHORT_QUERY_RESCUE);
     expect(config.instruction).toBeUndefined();
   });
 
@@ -27,6 +32,11 @@ describe("semanticConfig", () => {
       EMBEDDING_INSTRUCTION: "Retrieve matching note lines in any language",
       SEMANTIC_MIN_COSINE: "0.42",
       SEMANTIC_RELATIVE_MIN_RATIO: "0.75",
+      SEMANTIC_SHORT_QUERY_RESCUE: "false",
+      SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS: "18",
+      SEMANTIC_SHORT_QUERY_MAX_TOKENS: "2",
+      SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE: "0.22",
+      SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE: "0.34",
       SEMANTIC_MULTI_CHUNK_BONUS: "0.02",
       SEMANTIC_MAX_BONUS_CHUNKS: "2",
       SEMANTIC_MAX_MATCHES_PER_NOTE: "4",
@@ -59,6 +69,13 @@ describe("semanticConfig", () => {
       titleContext: false,
       includeTitleChunk: true,
     });
+    expect(config.shortQueryRescue).toEqual({
+      enabled: false,
+      maxCodePoints: 18,
+      maxTokens: 2,
+      rawMinCosine: 0.22,
+      expandedMinCosine: 0.34,
+    });
     expect(config.chunkTopK).toBe(60);
   });
 
@@ -81,6 +98,12 @@ describe("semanticConfig", () => {
     ["SEMANTIC_CHUNK_MAX_LINES", "0"],
     ["SEMANTIC_CHUNK_MAX_LINES", "1.5"],
     ["SEMANTIC_CHUNK_TITLE_CONTEXT", "yes"],
+    ["SEMANTIC_SHORT_QUERY_RESCUE", "yes"],
+    ["SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS", "0"],
+    ["SEMANTIC_SHORT_QUERY_MAX_TOKENS", "101"],
+    ["SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE", "2"],
+    ["SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE", "0.3"],
+    ["SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE", "-2"],
     ["SEMANTIC_CHUNK_TOP_K", "500"],
     ["SEMANTIC_TOP_K", "50"],
   ])("rejects invalid %s=%s", (name, value) => {
@@ -105,5 +128,19 @@ describe("semanticConfig", () => {
     } catch (error) {
       expect(error).toMatchObject({ status: 400, code: "UNSUPPORTED_EMBEDDING_MODEL" });
     }
+  });
+
+  it("does not apply Gemma-calibrated rescue floors to another model", () => {
+    const config = semanticConfig(env({
+      EMBEDDING_MODEL: "@cf/baai/bge-m3",
+      SEMANTIC_SHORT_QUERY_RESCUE: "true",
+    }));
+    expect(config.shortQueryRescue.enabled).toBe(false);
+  });
+
+  it("rejects a primary floor that leaves no rescue interval", () => {
+    expect(() => semanticConfig(env({ SEMANTIC_MIN_COSINE: "0.2" }))).toThrow(
+      /RAW_MIN_COSINE must be below SEMANTIC_MIN_COSINE/,
+    );
   });
 });

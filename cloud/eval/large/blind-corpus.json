@@ -1,0 +1,305 @@
+{
+  "titlePrefix": "[EVAL-BLIND:",
+  "notes": [
+    {
+      "key": "blind-n001",
+      "title": "Cache expiry during catalog updates",
+      "body": "When a product changes, publish the database row before removing the old cache entry.\nKeep the previous value for five minutes so readers already in flight can finish.\nIf error rates climb, restore the earlier row and warm the popular records."
+    },
+    {
+      "key": "blind-n002",
+      "title": "服务凭据轮换清单",
+      "body": "先在密钥库中添加新凭据，并让两个版本短暂并行。\n确认所有工作进程已读取新值后，再撤销旧凭据。\n轮换期间只记录凭据编号，不要把秘密内容写进日志。"
+    },
+    {
+      "key": "blind-n003",
+      "title": "Standby database handover",
+      "body": "Promote the replica only after its replication delay reaches zero.\nMove a small share of read traffic first, then switch writers during the maintenance window.\nKeep the former primary isolated until consistency checks pass."
+    },
+    {
+      "key": "blind-n004",
+      "title": "离线草稿合并规则",
+      "body": "同一段内容在两台设备都被修改时，保留两个版本供用户选择。\n只改标题的一方可以与只改正文的一方自动合并。\n无法判断先后时不要静默覆盖本地草稿。"
+    },
+    {
+      "key": "blind-n005",
+      "title": "Canary release notes",
+      "body": "Send the candidate build to five percent of signed-in users for thirty minutes.\nCompare crash frequency and checkout completion with the stable release.\nStop the expansion and return everyone to the previous build if either measure worsens."
+    },
+    {
+      "key": "blind-n006",
+      "title": "值班事件分流",
+      "body": "影响单个测试账户的问题记为低优先级，并在工作日处理。\n支付或登录大面积失败时立即呼叫值班负责人。\n交接记录要写清开始时间、用户影响和下一步动作。"
+    },
+    {
+      "key": "blind-n007",
+      "title": "Groceries after a late shift",
+      "body": "Place the order before lunch and choose the locker beside the night bus stop.\nBuy fruit that keeps for several days instead of anything already sliced.\nMove frozen items into the freezer as soon as you get home."
+    },
+    {
+      "key": "blind-n008",
+      "title": "洗衣房交接",
+      "body": "公用洗衣机结束后十分钟内取走衣物，避免占用下一位的时段。\n如果暂时赶不过去，请室友把衣篮放到门内，不要代烘羊毛衫。\n清洁剂放在上层柜子，量杯用完要冲洗。"
+    },
+    {
+      "key": "blind-n009",
+      "title": "Spare key arrangement",
+      "body": "Leave the sealed spare with Mina in apartment 4B while we are away.\nShe may use it only to water the balcony plants on Tuesday.\nCollect the envelope in person on Sunday evening."
+    },
+    {
+      "key": "blind-n010",
+      "title": "错过包裹后的处理",
+      "body": "先查看短信中的柜机编号，再到物业前台确认是否被代收。\n取件码失效时带身份证明，请工作人员重新发送一次。\n超过七天无人领取的包裹会退回寄件方。"
+    },
+    {
+      "key": "blind-n011",
+      "title": "Sunday kitchen routine",
+      "body": "Cook a pot of grains and roast two trays of vegetables before the week begins.\nCool everything uncovered for twenty minutes, then divide it into dated containers.\nKeep sauces separate so lunches do not become soggy."
+    },
+    {
+      "key": "blind-n012",
+      "title": "玄关离家清单",
+      "body": "门边托盘固定放钥匙、交通卡和耳机。\n前一晚把水杯装好，雨天再加一把折叠伞。\n出门前只检查炉灶、窗户和门锁三项。"
+    },
+    {
+      "key": "blind-n013",
+      "title": "Baggage on separate flight tickets",
+      "body": "When two flights are on separate bookings, ask at the first counter whether the suitcase can be tagged through.\nIf through-tagging is refused, collect the bag, clear customs, and check it again.\nAllow at least three hours between arrivals and the next bag-drop deadline."
+    },
+    {
+      "key": "blind-n014",
+      "title": "夜间列车衔接",
+      "body": "末班支线车在二十三点四十分发出，主线晚点时可能赶不上。\n到站前用官方应用确认站台，不要只看原行程单。\n错过衔接可在服务台免费改签到次日首班。"
+    },
+    {
+      "key": "blind-n015",
+      "title": "Mountain day fallback",
+      "body": "Check the summit wind report at breakfast, even when the town is sunny.\nIf cloud closes the upper trail, take the marked lakeside loop below the tree line.\nLeave the ridge immediately when thunder is heard."
+    },
+    {
+      "key": "blind-n016",
+      "title": "博物馆寄存须知",
+      "body": "展厅不允许携带超过四十厘米的背包。\n地下一层有免费寄存柜，但需要一枚硬币作为押金。\n闭馆前十五分钟停止进入特别展厅。"
+    },
+    {
+      "key": "blind-n017",
+      "title": "Shared quiet coach",
+      "body": "Take phone calls in the vestibule and silence notification sounds before boarding.\nBrief conversation is fine only when everyone nearby agrees.\nMove to a regular carriage if the group needs to talk for most of the trip."
+    },
+    {
+      "key": "blind-n018",
+      "title": "通宵航班后的安排",
+      "body": "落地当天只安排轻松步行，不预订需要准时到场的活动。\n午后若困倦，小睡控制在二十分钟以内。\n晚上按目的地时间正常吃饭，并尽量撑到十点再睡。"
+    },
+    {
+      "key": "blind-n019",
+      "title": "Knee soreness after running",
+      "body": "Pause hill repeats for a week and switch to level walking if it does not hurt.\nUse a cold pack wrapped in cloth for ten minutes after activity.\nSeek a clinician if swelling appears, the joint locks, or weight bearing becomes difficult."
+    },
+    {
+      "key": "blind-n020",
+      "title": "漏服一次药的备忘",
+      "body": "这张提醒针对医生开的短期抗生素：先查看药盒标签，不要自行把下一次剂量加倍。\n如果已经接近下一次服药时间，就跳过这次并恢复原计划。\n对时间拿不准时联系药师确认，尤其是抗凝药或胰岛素。"
+    },
+    {
+      "key": "blind-n021",
+      "title": "Migraine pattern journal",
+      "body": "Record the start time, duration, meal gaps, menstrual cycle, and recent stress.\nNote light sensitivity separately from ordinary eye strain.\nBring four weeks of entries to the appointment instead of relying on memory."
+    },
+    {
+      "key": "blind-n022",
+      "title": "夜间睡眠记录",
+      "body": "连续两周记下上床时间、夜间醒来次数和最终起床时间。\n早晨同时标注精神状态，但不要每天用手环分数评判自己。\n若打鼾伴随憋醒，应把记录带给医生讨论。"
+    },
+    {
+      "key": "blind-n023",
+      "title": "Prescription renewal timing",
+      "body": "Count the remaining tablets ten days before the bottle will be empty.\nRequest the renewal on a weekday because the clinic does not process routine messages on Sunday.\nAsk the pharmacy whether a partial supply is available if approval is delayed."
+    },
+    {
+      "key": "blind-n024",
+      "title": "屏幕工作后的眼睛休息",
+      "body": "每二十分钟看向远处二十秒，并主动多眨几次眼。\n把显示器放在视线略下方，避免空调直接吹向面部。\n若单眼持续疼痛或视力突然变化，应尽快就医。"
+    },
+    {
+      "key": "blind-n025",
+      "title": "Narrowing a history essay",
+      "body": "Turn the broad topic into one claim about a specific place, decade, and source set.\nTest the claim by writing one sentence that a reasonable reader could dispute.\nRemove background sections that do not help prove that sentence."
+    },
+    {
+      "key": "blind-n026",
+      "title": "参加答疑前的准备",
+      "body": "先把尝试过的步骤和具体卡点写成三行，再去见助教。\n带上最小可复现的例子，不要只说整个作业都不懂。\n结束前复述下一步，确认自己能独立继续。"
+    },
+    {
+      "key": "blind-n027",
+      "title": "Lab partner responsibilities",
+      "body": "One person labels samples while the other reads measurements aloud and enters them.\nSwap roles halfway through the session so both people practice each task.\nBoth partners review the notebook before signing the final page."
+    },
+    {
+      "key": "blind-n028",
+      "title": "间隔复习安排",
+      "body": "新概念在当天、三天后和一周后各回忆一次。\n每次先合上笔记自测，再只补看答错的部分。\n熟练内容逐步拉长间隔，不必每天重复。"
+    },
+    {
+      "key": "blind-n029",
+      "title": "Cleaning a reference list",
+      "body": "Verify author names and publication years against the original source before formatting.\nMark items you have not actually read and decide whether they belong in the paper.\nUse one citation style consistently rather than fixing punctuation entry by entry."
+    },
+    {
+      "key": "blind-n030",
+      "title": "小组汇报应急卡片",
+      "body": "每位成员准备一张写有开场句和关键数字的卡片。\n有人突然忘词时，下一位先总结上一张幻灯片再接着讲。\n彩排时专门练一次电脑断开后的口头版本。"
+    },
+    {
+      "key": "blind-n031",
+      "title": "Setting aside freelance tax",
+      "body": "Move thirty percent of every client payment into a separate savings account on receipt.\nDo not count that balance as available for equipment or holidays.\nReview the percentage after each quarterly tax estimate."
+    },
+    {
+      "key": "blind-n032",
+      "title": "银行卡陌生扣款",
+      "body": "先冻结实体卡并截图保存商户名称、金额和日期。\n向发卡行说明不认识该交易，同时询问是否需要更换卡号。\n在争议处理结束前保留工单编号和所有邮件。"
+    },
+    {
+      "key": "blind-n033",
+      "title": "Mortgage prepayment check",
+      "body": "Read the loan offer for an annual overpayment allowance before sending extra principal.\nAmounts above the allowance may trigger an early repayment charge.\nAsk the lender to confirm in writing how the payment changes the term."
+    },
+    {
+      "key": "blind-n034",
+      "title": "家庭应急金边界",
+      "body": "这笔钱只用于失业、紧急医疗或无法推迟的房屋维修。\n目标先存够三个月基本支出，再考虑提高到六个月。\n旅行和电子产品要另设储蓄目标，不能动用这里。"
+    },
+    {
+      "key": "blind-n035",
+      "title": "Recurring payment review",
+      "body": "Export three months of statements and highlight charges that repeat on the same date.\nCancel services that have not been used since the previous review.\nRecord the renewal month for annual plans so they are not overlooked."
+    },
+    {
+      "key": "blind-n036",
+      "title": "月底转账核对",
+      "body": "把银行流水逐笔与记账表匹配，未到账的转账单独标黄。\n跨行付款可能显示为处理中，不要在同一天重复发送。\n核对完成后记录账户余额与表格余额的差额。"
+    },
+    {
+      "key": "blind-n037",
+      "title": "Permission for event photographs",
+      "body": "The release lists the website and printed program as the only permitted uses.\nA participant may withdraw consent for future publication by emailing the organizer.\nAlready printed brochures cannot be recalled, but the online gallery should be updated."
+    },
+    {
+      "key": "blind-n038",
+      "title": "退租押金证据",
+      "body": "入住和搬出当天都拍摄带日期的房间全景与细节。\n把清洁收据、交接表和房东邮件保存在同一文件夹。\n若扣款理由不清，先书面索取逐项费用清单。"
+    },
+    {
+      "key": "blind-n039",
+      "title": "Ownership in a freelance agreement",
+      "body": "The contract says rough sketches remain the illustrator's property until the final invoice is paid.\nThe client receives rights to the approved final artwork, not unused concepts.\nAny portfolio restriction must be written into the signed schedule."
+    },
+    {
+      "key": "blind-n040",
+      "title": "提前结束租约",
+      "body": "先查看合同中的通知期限和允许提前解约的情形。\n书面通知要写明计划搬出日期，并保留送达证明。\n不要只依赖口头同意，任何费用减免都应由双方确认。"
+    },
+    {
+      "key": "blind-n041",
+      "title": "Neighborhood volunteer waiver",
+      "body": "The form explains ordinary activity risks but does not excuse deliberate misconduct.\nParticipants should receive time to read it before the cleanup begins.\nA parent or guardian signs for anyone under eighteen."
+    },
+    {
+      "key": "blind-n042",
+      "title": "发送正式催款信",
+      "body": "信中列出欠款来源、发票日期、已尝试的联系和付款期限。\n只陈述可证明的事实，避免威胁对方或夸大后果。\n寄出后保存副本和可追踪的送达记录。"
+    },
+    {
+      "key": "blind-n043",
+      "title": "Calibrating a stream sensor",
+      "body": "Place the probe in two certified reference solutions before collecting field readings.\nIf the second check drifts beyond tolerance, discard measurements since the last valid check.\nWrite the solution lot numbers and water temperature in the field log."
+    },
+    {
+      "key": "blind-n044",
+      "title": "温室对照样本",
+      "body": "每个处理组旁边保留未添加肥料的同批幼苗。\n除研究变量外，光照、浇水和盆土都保持一致。\n测量人员不知道哪些盆属于对照组，以减少主观偏差。"
+    },
+    {
+      "key": "blind-n045",
+      "title": "Watching an exoplanet transit",
+      "body": "Measure the star before, during, and after the predicted passage using the same exposure.\nA shallow repeated dip may indicate a planet crossing the stellar disk.\nCompare nearby reference stars to rule out thin cloud."
+    },
+    {
+      "key": "blind-n046",
+      "title": "海岸潮池调查",
+      "body": "沿固定样线每隔两米放置一次方框，记录其中的物种和数量。\n同一地点在相近潮位重复调查，避免把潮汐差异当成季节变化。\n翻动石块后要原样放回，减少对生境的干扰。"
+    },
+    {
+      "key": "blind-n047",
+      "title": "Variable star observing",
+      "body": "Estimate brightness against two comparison stars at the same hour on clear nights.\nDo not mix measurements from different filters in one curve.\nReport unusual changes only after checking the camera clock and image artifacts."
+    },
+    {
+      "key": "blind-n048",
+      "title": "冰芯样品登记",
+      "body": "每段样品从冷库取出时立即扫描条码并记录时间。\n切割工具在样品之间用超纯水清洗，防止离子污染。\n剩余部分重新密封后放回原编号的盒位。"
+    },
+    {
+      "key": "blind-n049",
+      "title": "Freezer power outage",
+      "body": "Keep the door closed and note the time electricity was lost.\nFood that still contains ice crystals can usually be refrozen once power returns.\nDiscard anything perishable that stayed above refrigerator temperature for several hours."
+    },
+    {
+      "key": "blind-n050",
+      "title": "暖气片上冷下热",
+      "body": "关闭供暖后等待设备冷却，再慢慢打开排气阀。\n听到空气排出后，用布接住少量水并立即关紧阀门。\n如果反复积气或出现漏水，请联系维修人员检查系统压力。"
+    },
+    {
+      "key": "blind-n051",
+      "title": "衣柜后方的潮斑",
+      "body": "先把衣柜移开，让墙面通风并拍照记录斑点范围。\n佩戴手套清理小面积表面霉斑，不要干刷或混用清洁剂。\n若墙体松软、气味持续或范围扩大，请检查是否有暗管漏水。"
+    },
+    {
+      "key": "blind-n052",
+      "title": "Dishwasher leaving grit",
+      "body": "Clean the filter under the lower rack and check that the spray arms turn freely.\nLoad tall plates away from the detergent door so it can open fully.\nRun the hot-water tap briefly before starting a heavy cycle."
+    },
+    {
+      "key": "blind-n053",
+      "title": "Winter window moisture",
+      "body": "Open the bedroom vent each morning and wipe standing water from the sill.\nMove curtains away from the glass so warm air can circulate.\nIf moisture forms between sealed panes, the glazing unit likely needs repair."
+    },
+    {
+      "key": "blind-n054",
+      "title": "木桌水印处理",
+      "body": "先用干布吸走水分，让桌面完全干燥再判断痕迹深浅。\n浅色白印可隔着棉布用低温短暂加热，每次几秒后检查。\n若漆面发黏或颜色变深，应停止并咨询家具修复人员。"
+    },
+    {
+      "key": "blind-n055",
+      "title": "Breathing plan for choir rehearsal",
+      "body": "Mark staggered breathing points so the section does not inhale together.\nPractice the long final phrase on a quiet consonant before adding full volume.\nIf the throat feels tight, reduce volume and reset posture rather than pushing."
+    },
+    {
+      "key": "blind-n056",
+      "title": "社区放映字幕",
+      "body": "选片后先确认公开放映许可，不要把个人流媒体账户当作授权。\n为听障观众准备带说话人标记的字幕文件。\n开场前测试画面比例，并保留五分钟调整时间。"
+    },
+    {
+      "key": "blind-n057",
+      "title": "Identifying an early printing",
+      "body": "Check the copyright-page number line and compare it with the publisher's bibliography.\nA later dust jacket can be paired with an older text block, so inspect both separately.\nPencil prices from a previous shop are not proof of edition."
+    },
+    {
+      "key": "blind-n058",
+      "title": "茶会座次与续水",
+      "body": "主人位靠近烧水台，方便观察水温和及时续水。\n先询问客人是否想再添，不要默认为每只杯子倒满。\n对香气较淡的茶先用，不与浓焙火茶共用一个公道杯。"
+    },
+    {
+      "key": "blind-n059",
+      "title": "Labels for a small gallery",
+      "body": "Begin with what the visitor can see before introducing dates or theory.\nKeep the main label under one hundred words and place translations at equal height.\nCredit lenders and photographers exactly as specified in the agreement."
+    },
+    {
+      "key": "blind-n060",
+      "title": "口述史访谈整理",
+      "body": "当天备份录音，并记录受访者希望匿名的姓名和地点。\n转写时保留有意义的停顿，但可删去不影响意思的重复口头词。\n公开片段前把最终引文发给受访者核对语境。"
+    }
+  ]
+}

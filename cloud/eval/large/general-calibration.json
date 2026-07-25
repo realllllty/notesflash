@@ -1,0 +1,366 @@
+{
+  "name": "general-large-calibration-v1",
+  "frozen": false,
+  "comment": "Sixty-query calibration slice: fifty answerable paraphrase/cross-language cases plus ten polysemy or unanswerable negatives. Thresholds and retrieval variants may be tuned here, never on the frozen holdout.",
+  "queries": [
+    {
+      "query": "backup house key",
+      "scenario": "calibration-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g001", "lineIncludes": "门口抽屉里放着一把备用钥匙" }]
+    },
+    {
+      "query": "prevent black garments fading",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g002", "lineIncludes": "Cold water keeps dark clothes from losing their color" }]
+    },
+    {
+      "query": "parcel PIN",
+      "scenario": "calibration-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g003", "lineIncludes": "包裹到站后会收到六位取件码" }]
+    },
+    {
+      "query": "edit one meeting in a repeating series",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g004", "lineIncludes": "Recurring events can be changed for one occurrence without editing the series" }]
+    },
+    {
+      "query": "湿透的鞋怎样加快干燥",
+      "scenario": "calibration-same-language-zh-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g005", "lineIncludes": "湿鞋里塞报纸可以更快吸走水分" }]
+    },
+    {
+      "query": "临时访客证在哪里领",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g006", "lineIncludes": "Guests collect a temporary badge from reception" }]
+    },
+    {
+      "query": "power bank storage maintenance",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g007", "lineIncludes": "长期不用的移动电源每三个月补一次电" }]
+    },
+    {
+      "query": "燕麦奶缺货替换规则",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g008", "lineIncludes": "Substitute oat milk only when the original brand is unavailable" }]
+    },
+    {
+      "query": "宠物整天藏着不出来怎么办",
+      "scenario": "calibration-same-language-zh-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g009", "lineIncludes": "如果躲在床底超过一天就联系宠物医院" }]
+    },
+    {
+      "query": "after-hours book return",
+      "scenario": "calibration-long-note-single-line-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g010", "lineIncludes": "The library return slot remains open after the desk closes" }]
+    },
+    {
+      "query": "airport bus pickup",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g012", "lineIncludes": "机场巴士在三号出口外侧的蓝色站牌停靠" }]
+    },
+    {
+      "query": "火车临时换站台",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g013", "lineIncludes": "Platform assignments may change ten minutes before departure" }]
+    },
+    {
+      "query": "坐飞机能不能托运充电宝",
+      "scenario": "calibration-same-language-zh-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g014", "lineIncludes": "充电宝必须随身携带，不能托运" }]
+    },
+    {
+      "query": "签证流水要覆盖多久",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g015", "lineIncludes": "Bank statements must cover the most recent three months" }]
+    },
+    {
+      "query": "hotel deposit hold",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g016", "lineIncludes": "前台会预授权一晚房费作为押金" }]
+    },
+    {
+      "query": "where is the final drinking-water stop on the hike",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g017", "lineIncludes": "The final water source is beside the old stone bridge" }]
+    },
+    {
+      "query": "refund transit balance",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g018", "lineIncludes": "离境前可以在中央车站退回卡内余额" }]
+    },
+    {
+      "query": "receive verification texts abroad",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g019", "lineIncludes": "Keep the home number enabled for incoming verification messages" }]
+    },
+    {
+      "query": "travel covid test",
+      "scenario": "calibration-long-note-single-line-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g020", "lineIncludes": "第九天下午在中央市场旁做抗原检测" }]
+    },
+    {
+      "query": "safe layover time between overseas flights",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g021", "lineIncludes": "The airline recommends at least ninety minutes between international flights" }]
+    },
+    {
+      "query": "flight delay reimbursement",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g022", "lineIncludes": "航班延误超过六小时才可以申请固定补偿" }]
+    },
+    {
+      "query": "take with food",
+      "scenario": "calibration-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g023", "lineIncludes": "这片药要随早餐一起服用，避免空腹不适" }]
+    },
+    {
+      "query": "补牙后遇冷疼多久算正常",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g024", "lineIncludes": "Sensitivity to cold should fade within two weeks after the filling" }]
+    },
+    {
+      "query": "vaccine refrigeration range",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g025", "lineIncludes": "未开封的药剂要保存在二到八摄氏度" }]
+    },
+    {
+      "query": "怎么把生物钟往前调",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g026", "lineIncludes": "Morning daylight helps move the body clock earlier" }]
+    },
+    {
+      "query": "return to running calf raises",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g027", "lineIncludes": "恢复跑步前要能连续完成二十次提踵" }]
+    },
+    {
+      "query": "过敏日记怎么排查食物",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g028", "lineIncludes": "Change only one suspected food at a time" }]
+    },
+    {
+      "query": "reduce computer eye fatigue",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g029", "lineIncludes": "每工作二十分钟就看远处二十秒" }]
+    },
+    {
+      "query": "哪项化验数值偏低",
+      "scenario": "calibration-long-note-single-line-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g030", "lineIncludes": "Vitamin D was slightly below the laboratory target" }]
+    },
+    {
+      "query": "复诊前怎样整理病情",
+      "scenario": "calibration-same-language-zh-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g031", "lineIncludes": "提前整理最近三个月的症状时间线" }]
+    },
+    {
+      "query": "electrolytes for prolonged exercise in heat",
+      "scenario": "calibration-same-language-en-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g032", "lineIncludes": "Long sessions in hot weather may require electrolytes" }]
+    },
+    {
+      "query": "哪些习惯容易诱发偏头痛",
+      "scenario": "calibration-same-language-zh-paraphrase",
+      "requiredRank": 1,
+      "expect": [{ "key": "g033", "lineIncludes": "睡眠时间突然改变容易触发头痛" }]
+    },
+    {
+      "query": "spaced repetition",
+      "scenario": "calibration-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g034", "lineIncludes": "新知识当天先回忆一次，再逐渐拉长复习间隔" }]
+    },
+    {
+      "query": "如何高效去老师答疑时间",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g035", "lineIncludes": "Bring one specific question rather than asking for a full lecture recap" }]
+    },
+    {
+      "query": "website citation details",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g036", "lineIncludes": "网页资料需要写明作者、页面标题和访问日期" }]
+    },
+    {
+      "query": "考试桌上要放什么证件",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g037", "lineIncludes": "A photo identification card must remain visible on the desk" }]
+    },
+    {
+      "query": "peer review group assignment",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g038", "lineIncludes": "最终提交前由没有写该段的人交叉检查" }]
+    },
+    {
+      "query": "怎样练习主动产出词汇",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g039", "lineIncludes": "Mix recognition cards with prompts that require production" }]
+    },
+    {
+      "query": "drop course without transcript mark",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g040", "lineIncludes": "学期第四周前退课不会出现在成绩单上" }]
+    },
+    {
+      "query": "低风险小测对长期记忆的作用",
+      "scenario": "calibration-long-note-single-line-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g041", "lineIncludes": "Frequent low stakes testing improves later recall" }]
+    },
+    {
+      "query": "diluting strong acid",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g042", "lineIncludes": "稀释强酸时必须把酸缓慢加入水中" }]
+    },
+    {
+      "query": "纸质密封成绩单怎么领",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g043", "lineIncludes": "Sealed paper copies can be collected from the registrar" }]
+    },
+    {
+      "query": "read a research paper efficiently",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g044", "lineIncludes": "先看摘要和图表判断是否值得精读" }]
+    },
+    {
+      "query": "freeze card",
+      "scenario": "calibration-short-cross-language-en-to-zh",
+      "requiredRank": 3,
+      "expect": [{ "key": "g045", "lineIncludes": "找不到卡片时先在手机银行暂停交易" }]
+    },
+    {
+      "query": "国际汇款审核多久",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g046", "lineIncludes": "International payments may remain under review for two business days" }]
+    },
+    {
+      "query": "roll over fun money",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g047", "lineIncludes": "没有花完的娱乐额度可以滚到下个月" }]
+    },
+    {
+      "query": "热敏小票怎么长期保存",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g048", "lineIncludes": "Scan deductible invoices before the thermal paper fades" }]
+    },
+    {
+      "query": "bond principal repayment date",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g049", "lineIncludes": "这笔固定收益产品在九月三十日返还本金" }]
+    },
+    {
+      "query": "陌生贷款账户如何纠错",
+      "scenario": "calibration-cross-language-zh-to-en",
+      "requiredRank": 1,
+      "expect": [{ "key": "g050", "lineIncludes": "Dispute an unfamiliar account with both the bureau and the lender" }]
+    },
+    {
+      "query": "avoid dynamic currency conversion",
+      "scenario": "calibration-cross-language-en-to-zh",
+      "requiredRank": 1,
+      "expect": [{ "key": "g051", "lineIncludes": "商户询问币种时选择当地货币结算" }]
+    },
+    {
+      "query": "musical key change",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g001"]
+    },
+    {
+      "query": "entry-level salary",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g003", "g006"]
+    },
+    {
+      "query": "exit poll forecast",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g012"]
+    },
+    {
+      "query": "cold case investigation",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g002", "g024"]
+    },
+    {
+      "query": "Bond villain actor",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g049"]
+    },
+    {
+      "query": "appeal to emotion",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g062"]
+    },
+    {
+      "query": "proof by induction",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g078"]
+    },
+    {
+      "query": "shoot free throws",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g089", "g097"]
+    },
+    {
+      "query": "computer virus cleanup",
+      "scenario": "calibration-hard-negative-polysemy",
+      "expect": [],
+      "forbid": ["g025", "g112"]
+    },
+    {
+      "query": "deep sea hydrothermal vents",
+      "scenario": "calibration-negative-unanswerable",
+      "expect": []
+    }
+  ]
+}

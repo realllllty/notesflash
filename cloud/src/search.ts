@@ -1,4 +1,10 @@
 import { hydrateNotes } from "./db";
+import {
+  aiSearchConfig,
+  aiSearchInstance,
+  searchAiSearchNotes,
+  type AiSearchRuntimeConfig,
+} from "./ai-search";
 import { AppError, json, readJson, requirePrincipal, requireString } from "./http";
 import { retrieveSemanticMatches, toSearchMatch, type SemanticRetrieval } from "./semantic";
 import { semanticConfig, type SemanticConfig } from "./semantic-config";
@@ -132,24 +138,32 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
   if (body.fallbackOnly !== undefined && typeof body.fallbackOnly !== "boolean") {
     throw new AppError(400, "INVALID_INPUT", "fallbackOnly must be a boolean.");
   }
-  const fallbackOnly = body.fallbackOnly !== false;
-  const baseConfig = semanticConfig(context.env);
-  const topK = requestedNoteLimit(body.limit, baseConfig.aggregation.topK);
-  const config: SemanticConfig = {
-    ...baseConfig,
-    aggregation: { ...baseConfig.aggregation, topK },
-  };
+  const backendConfig = aiSearchConfig(context.env);
+  const baseConfig = backendConfig.backend === "vectorize"
+    ? semanticConfig(context.env)
+    : null;
+  const configuredTopK = baseConfig?.aggregation.topK ?? backendConfig.topK;
+  const topK = requestedNoteLimit(body.limit, configuredTopK);
   const startedAt = performance.now();
 
   // Literal matches are faster, deterministic, and easier to explain. This
   // guard also protects old clients that still start lexical and semantic
   // requests concurrently: Workers AI is never called when exact recall is
   // already sufficient.
-  if (fallbackOnly && await hasLiteralMatch(context, query)) {
+  // `fallbackOnly` is retained as a deprecated wire-compatibility field. Both
+  // boolean values now obey the same hard lexical-first invariant: no caller
+  // may use the public semantic endpoint to bypass literal recall.
+  if (await hasLiteralMatch(context, query)) {
     return json(
       {
         query,
         strategy: "lexical-first",
+        backend: backendConfig.backend === "ai-search"
+          ? "cloudflare-ai-search"
+          : "legacy-vectorize",
+        semanticBackend: backendConfig.backend === "ai-search"
+          ? "ai-search"
+          : "legacy-vectorize",
         semanticSkipped: true,
         reason: "literal-match-exists",
         topK,
@@ -159,6 +173,60 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
       { "server-timing": `total;dur=${(performance.now() - startedAt).toFixed(1)}` },
     );
   }
+
+  if (backendConfig.backend === "ai-search") {
+    const retrieval = await searchAiSearchNotes(context.env, query, topK);
+    const normalizeQuery = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
+    const providerQueryAdjusted = retrieval.providerSearchQuery.length > 0 &&
+      normalizeQuery(retrieval.providerSearchQuery) !== normalizeQuery(retrieval.effectiveQuery);
+
+    return json({
+      query,
+      strategy: "semantic-fallback",
+      backend: "cloudflare-ai-search",
+      semanticBackend: "ai-search",
+      rankingStrategy: "cloudflare-ai-search-hybrid-rrf",
+      rankingSource: "provider-order",
+      comparisonScope: "logical-line-items",
+      retrieval: {
+        type: "hybrid",
+        fusionMethod: "rrf",
+        keywordMatchMode: "or",
+        reranking: backendConfig.reranking,
+      },
+      translation: {
+        enabled: backendConfig.queryTranslation,
+        attempted: retrieval.translationAttempted,
+        applied: retrieval.translatedQuery !== null,
+        failed: retrieval.translationFailed,
+      },
+      queryRewrite: {
+        configured: backendConfig.queryRewrite,
+        enabled: false,
+        applied: false,
+        reason: "independent-query-not-rewritten",
+        providerQueryAdjusted,
+      },
+      topK,
+      providerResultLimit: backendConfig.maxResults,
+      candidateItemCount: retrieval.responseChunkCount,
+      resolvedItemCount: retrieval.validItemCount,
+      matchedNoteCount: retrieval.matchedNoteCount,
+      results: retrieval.results,
+    }, 200, {
+      "server-timing": aiSearchServerTiming(retrieval.timings, performance.now() - startedAt),
+    });
+  }
+
+  // The legacy path remains available as an explicit rollback while AI Search
+  // is evaluated against the frozen quality suites.
+  if (!baseConfig) {
+    throw new AppError(500, "INVALID_SEMANTIC_CONFIGURATION", "Semantic search is not configured.");
+  }
+  const config: SemanticConfig = {
+    ...baseConfig,
+    aggregation: { ...baseConfig.aggregation, topK },
+  };
 
   const retrieval = await retrieveSemanticMatches(context.env, config, query);
   const selected = retrieval.aggregation.notes;
@@ -204,6 +272,8 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
   return json({
     query,
     strategy: "semantic-fallback",
+    backend: "legacy-vectorize",
+    semanticBackend: "legacy-vectorize",
     rankingStrategy: "chunk-vector-recall",
     comparisonScope: "line-level-chunks",
     embeddingModel: config.spec.id,
@@ -216,11 +286,23 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
     chunkTopK: config.chunkTopK,
     candidateChunkCount: retrieval.indexedCandidateCount,
     resolvedChunkCount: retrieval.resolvedCandidateCount,
+    indexedUsedChunkCount: retrieval.indexedUsedCandidateCount,
+    usedChunkCount: retrieval.usedCandidateCount,
+    expandedCandidateChunkCount: retrieval.expandedIndexedCandidateCount,
+    expandedResolvedChunkCount: retrieval.expandedResolvedCandidateCount,
+    expandedIndexedUsedChunkCount: retrieval.expandedIndexedUsedCandidateCount,
+    expandedUsedChunkCount: retrieval.expandedUsedCandidateCount,
     matchedChunkCount: retrieval.aggregation.matchedChunkCount,
     matchedNoteCount: selected.length,
     topChunkScore: retrieval.aggregation.topChunkScore,
+    shortQueryRescue: {
+      mode: "same-chunk-consensus",
+      enabled: config.shortQueryRescue.enabled,
+      ...retrieval.shortQueryRescue,
+    },
     pendingIndexCount: retrieval.pendingNoteCount,
     pendingNotesScored: retrieval.pendingNotesScored,
+    pendingFallback: retrieval.pendingFallback,
     spanRefinement: config.spanRefine.enabled
       ? {
         refinedMatchCount: refinement.refinedCount,
@@ -237,6 +319,26 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
       performance.now() - startedAt,
     ),
   });
+}
+
+function aiSearchServerTiming(
+  timings: {
+    translationMs: number;
+    searchMs: number;
+    resolveMs: number;
+    hydrateMs: number;
+    totalMs: number;
+  },
+  total: number,
+): string {
+  return [
+    `translation;dur=${timings.translationMs.toFixed(1)}`,
+    `ai-search;dur=${timings.searchMs.toFixed(1)}`,
+    `resolve;dur=${timings.resolveMs.toFixed(1)}`,
+    `hydrate;dur=${timings.hydrateMs.toFixed(1)}`,
+    `adapter;dur=${timings.totalMs.toFixed(1)}`,
+    `total;dur=${total.toFixed(1)}`,
+  ].join(", ");
 }
 
 function semanticServerTiming(
@@ -258,6 +360,11 @@ function semanticServerTiming(
 
 export async function searchIndexStatus(context: RequestContext): Promise<Response> {
   requirePrincipal(context);
+  const backendConfig = aiSearchConfig(context.env);
+  if (backendConfig.backend === "ai-search") {
+    return aiSearchIndexStatus(context, backendConfig);
+  }
+
   const config = semanticConfig(context.env);
   const noteCounts = await context.env.DB.prepare(
     `SELECT
@@ -289,6 +396,8 @@ export async function searchIndexStatus(context: RequestContext): Promise<Respon
   }
 
   return json({
+    backend: "legacy-vectorize",
+    semanticBackend: "legacy-vectorize",
     strategy: "chunk-vector-recall",
     comparisonScope: "line-level-chunks",
     embeddingModel: config.spec.id,
@@ -296,6 +405,7 @@ export async function searchIndexStatus(context: RequestContext): Promise<Respon
     chunking: config.chunking,
     minCosine: config.aggregation.minCosine,
     relativeMinRatio: config.aggregation.relativeMinRatio,
+    shortQueryRescue: config.shortQueryRescue,
     chunkTopK: config.chunkTopK,
     topK: config.aggregation.topK,
     currentNoteCount: noteCounts?.notes ?? 0,
@@ -305,5 +415,91 @@ export async function searchIndexStatus(context: RequestContext): Promise<Respon
     currentChunkCount: chunkCount?.count ?? 0,
     indexedVectorCount,
     indexError,
+  });
+}
+
+async function aiSearchIndexStatus(
+  context: RequestContext,
+  config: AiSearchRuntimeConfig,
+): Promise<Response> {
+  const noteCounts = await context.env.DB.prepare(
+    `SELECT
+       COUNT(*) AS notes,
+       SUM(CASE WHEN ai_search_status = 'ready' THEN 1 ELSE 0 END) AS ready,
+       SUM(CASE WHEN ai_search_status IN ('pending', 'processing') THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN ai_search_status = 'failed' THEN 1 ELSE 0 END) AS failed
+     FROM notes WHERE deleted_at IS NULL`,
+  ).first<{ notes: number; ready: number | null; pending: number | null; failed: number | null }>();
+  const itemCounts = await context.env.DB.prepare(
+    `SELECT
+       COUNT(*) AS items,
+       SUM(CASE WHEN i.sync_state = 'ready' THEN 1 ELSE 0 END) AS ready,
+       SUM(CASE WHEN i.sync_state IN ('pending', 'uploading', 'submitted', 'deleting')
+                THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN i.sync_state = 'failed' THEN 1 ELSE 0 END) AS failed
+     FROM ai_search_items i
+     JOIN notes n ON n.id = i.note_id
+     WHERE n.deleted_at IS NULL AND n.content_hash = i.note_content_hash`,
+  ).first<{ items: number; ready: number | null; pending: number | null; failed: number | null }>();
+
+  let providerStatus: {
+    queued: number | null;
+    running: number | null;
+    completed: number | null;
+    error: number | null;
+    skipped: number | null;
+    outdated: number | null;
+  } | null = null;
+  let providerError: string | null = null;
+  try {
+    const stats = await (await aiSearchInstance(context.env, config)).stats();
+    const count = (value: number | undefined): number | null =>
+      typeof value === "number" && Number.isFinite(value) ? value : null;
+    providerStatus = {
+      queued: count(stats.queued),
+      running: count(stats.running),
+      completed: count(stats.completed),
+      error: count(stats.error),
+      skipped: count(stats.skipped),
+      outdated: count(stats.outdated),
+    };
+  } catch (error) {
+    providerError = error instanceof AppError
+      ? error.code
+      : error instanceof Error
+      ? error.name
+      : "UNKNOWN_ERROR";
+  }
+
+  return json({
+    backend: "cloudflare-ai-search",
+    semanticBackend: "ai-search",
+    strategy: "cloudflare-ai-search-hybrid-rrf",
+    rankingSource: "provider-order",
+    comparisonScope: "logical-line-items",
+    retrieval: {
+      type: "hybrid",
+      fusionMethod: "rrf",
+      keywordMatchMode: "or",
+      reranking: config.reranking,
+    },
+    translation: { enabled: config.queryTranslation },
+    queryRewrite: {
+      configured: config.queryRewrite,
+      enabled: false,
+      reason: "independent-query-not-rewritten",
+    },
+    topK: config.topK,
+    providerResultLimit: config.maxResults,
+    currentNoteCount: noteCounts?.notes ?? 0,
+    readyNoteCount: noteCounts?.ready ?? 0,
+    pendingNoteCount: noteCounts?.pending ?? 0,
+    failedNoteCount: noteCounts?.failed ?? 0,
+    currentItemCount: itemCounts?.items ?? 0,
+    readyItemCount: itemCounts?.ready ?? 0,
+    pendingItemCount: itemCounts?.pending ?? 0,
+    failedItemCount: itemCounts?.failed ?? 0,
+    providerStatus,
+    providerError,
   });
 }

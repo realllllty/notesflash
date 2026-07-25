@@ -11,8 +11,19 @@ export interface RerankerOutput {
   }>;
 }
 
+export interface TranslationInput {
+  text: string;
+  source_lang?: string;
+  target_lang: string;
+}
+
+export interface TranslationOutput {
+  translated_text?: string;
+}
+
 export interface AiBinding {
   run(model: "@cf/baai/bge-reranker-base", input: RerankerInput): Promise<RerankerOutput>;
+  run(model: "@cf/meta/m2m100-1.2b", input: TranslationInput): Promise<TranslationOutput>;
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -24,6 +35,8 @@ export interface Env {
   /** Line-level chunk index used by semantic search. */
   CHUNK_INDEX: VectorizeIndex;
   AI: AiBinding;
+  /** Default AI Search namespace; the Worker creates/opens its instance. */
+  AI_SEARCH?: AiSearchNamespace;
   INDEX_QUEUE: Queue<IndexJob>;
 
   INSTANCE_NAME?: string;
@@ -32,6 +45,12 @@ export interface Env {
   EMBEDDING_INSTRUCTION?: string;
   SEMANTIC_MIN_COSINE?: string;
   SEMANTIC_RELATIVE_MIN_RATIO?: string;
+  /** Enable the two-view consensus rescue for ambiguous short queries. */
+  SEMANTIC_SHORT_QUERY_RESCUE?: string;
+  SEMANTIC_SHORT_QUERY_MAX_CODEPOINTS?: string;
+  SEMANTIC_SHORT_QUERY_MAX_TOKENS?: string;
+  SEMANTIC_SHORT_QUERY_RAW_MIN_COSINE?: string;
+  SEMANTIC_SHORT_QUERY_EXPANDED_MIN_COSINE?: string;
   SEMANTIC_MULTI_CHUNK_BONUS?: string;
   SEMANTIC_MAX_BONUS_CHUNKS?: string;
   SEMANTIC_MAX_MATCHES_PER_NOTE?: string;
@@ -48,6 +67,19 @@ export interface Env {
   SEMANTIC_SPAN_MAX_NOTES?: string;
   SEMANTIC_SPAN_MIN_RATIO?: string;
   SEMANTIC_TOP_K?: string;
+  /** Explicit semantic backend switch; legacy deployments default to Vectorize. */
+  SEMANTIC_BACKEND?: string;
+  /** Enables background line-item synchronization to Cloudflare AI Search. */
+  AI_SEARCH_ENABLED?: string;
+  AI_SEARCH_INSTANCE_NAME?: string;
+  /** Translate independent zh/en queries before hybrid retrieval. */
+  AI_SEARCH_QUERY_TRANSLATION?: string;
+  /** Managed query rewrite is intentionally off for independent note queries. */
+  AI_SEARCH_QUERY_REWRITE?: string;
+  AI_SEARCH_RERANKING?: string;
+  AI_SEARCH_MAX_RESULTS?: string;
+  AI_SEARCH_MAX_MATCHES_PER_NOTE?: string;
+  AI_SEARCH_MAX_ITEMS_PER_NOTE?: string;
   /** Search lab kill switch; must be exactly "true" to expose the endpoint. */
   LAB_ENABLED?: string;
   /** SHA-256 hex of the lab token. The plaintext never enters the repository. */
@@ -99,11 +131,11 @@ export interface Note {
 
 export interface SearchResult extends Note {
   matchType: "lexical" | "semantic";
-  /** Lexical rank score, or the best chunk cosine similarity for semantic hits. */
+  /** Lexical rank score, or the selected semantic provider score. */
   score: number | null;
   /**
-   * Matched body lines for a semantic hit, strongest first. Absent for lexical
-   * results, where the client already knows the literal match positions.
+   * Provider-ranked semantic line matches. Absent for lexical results, where
+   * the client already knows the literal match positions.
    */
   matches?: SearchMatch[];
 }
@@ -159,6 +191,10 @@ export interface NoteRow {
   embedding_vector_id: string | null;
   embedding_updated_at: number | null;
   embedding_error_code: string | null;
+  ai_search_status: string;
+  ai_search_indexed_content_hash: string | null;
+  ai_search_updated_at: number | null;
+  ai_search_error_code: string | null;
 }
 
 export interface ImageRow {
@@ -174,7 +210,12 @@ export interface ImageRow {
   created_at: number;
 }
 
-export type IndexJob = EmbedNoteJob | DeleteVectorJob | DeleteChunksJob;
+export type IndexJob =
+  | EmbedNoteJob
+  | DeleteVectorJob
+  | DeleteChunksJob
+  | SyncAiSearchNoteJob
+  | VerifyAiSearchNoteJob;
 
 export interface EmbedNoteJob {
   type: "embed-note";
@@ -203,4 +244,54 @@ export interface DeleteChunksJob {
   /** Chunks of this content hash are kept; everything else for the note goes. */
   keepContentHash: string | null;
   createdAt: number;
+}
+
+/** Uploads or removes the current logical-line manifest in Cloudflare AI Search. */
+export interface SyncAiSearchNoteJob {
+  type: "sync-ai-search-note";
+  eventId: string;
+  noteId: string;
+  version: number;
+  contentHash: string;
+  createdAt: number;
+}
+
+/** Polls asynchronous AI Search item processing without blocking Queue for 30s/item. */
+export interface VerifyAiSearchNoteJob {
+  type: "verify-ai-search-note";
+  eventId: string;
+  noteId: string;
+  version: number;
+  contentHash: string;
+  attempt: number;
+  createdAt: number;
+}
+
+export interface AiSearchItemRow {
+  item_key: string;
+  item_id: string | null;
+  note_id: string;
+  note_content_hash: string;
+  note_version: number;
+  item_index: number;
+  kind: "title" | "body";
+  raw_line_index: number | null;
+  line_number: number | null;
+  char_start: number | null;
+  char_end: number | null;
+  text: string;
+  index_text_hash: string;
+  sync_state: "pending" | "uploading" | "submitted" | "ready" | "deleting" | "failed";
+  provider_status: string | null;
+  error_code: string | null;
+  /** Durable token fencing one provider upload/recovery/delete operation. */
+  upload_token: string | null;
+  /** Next official Items-list page to inspect when item_id is missing. */
+  provider_scan_page: number;
+  /** Observed end-of-list attempts; never treated as proof that item_key is absent. */
+  provider_scan_pass: number;
+  /** Provider total_count snapshot for the current pass, when available. */
+  provider_scan_total_count: number | null;
+  created_at: number;
+  updated_at: number;
 }

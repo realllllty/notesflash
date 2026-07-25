@@ -1,0 +1,148 @@
+{
+  "name": "short-cross-language-regression-v1",
+  "frozen": false,
+  "comment": "Non-frozen regression suite for short ambiguous English queries against Chinese note lines. It contains cases used while designing short-query rescue and must not be treated as the final blind holdout. Bare terms require top 3; contextual variants require top 1.",
+  "queries": [
+    {
+      "query": "entry",
+      "scenario": "short-cross-language-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "trash-zh", "lineIncludes": "目前恢复入口只有接口，没有界面" }]
+    },
+    {
+      "query": "recovery entry point",
+      "scenario": "short-cross-language-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "trash-zh", "lineIncludes": "目前恢复入口只有接口，没有界面" }]
+    },
+    {
+      "query": "exit",
+      "scenario": "short-cross-language-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "short-exit-zh", "lineIncludes": "安全出口在西侧走廊尽头" }]
+    },
+    {
+      "query": "emergency exit",
+      "scenario": "short-cross-language-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "short-exit-zh", "lineIncludes": "安全出口在西侧走廊尽头" }]
+    },
+    {
+      "query": "preferences",
+      "scenario": "short-cross-language-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "short-settings-zh", "lineIncludes": "设置面板从搜索框右侧打开" }]
+    },
+    {
+      "query": "open app preferences",
+      "scenario": "short-cross-language-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "short-settings-zh", "lineIncludes": "设置面板从搜索框右侧打开" }]
+    },
+    {
+      "query": "auth",
+      "scenario": "short-cross-language-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "auth-zh", "lineIncludes": "设备令牌是高熵随机值" }]
+    },
+    {
+      "query": "device authentication",
+      "scenario": "short-cross-language-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "auth-zh", "lineIncludes": "设备令牌是高熵随机值" }]
+    },
+    {
+      "query": "upload",
+      "scenario": "short-cross-language-bare",
+      "requiredRank": 3,
+      "expect": [{ "key": "long-ops", "lineIncludes": "图片上传超过十二兆会被拒绝" }]
+    },
+    {
+      "query": "upload image",
+      "scenario": "short-cross-language-context",
+      "requiredRank": 1,
+      "expect": [{ "key": "long-ops", "lineIncludes": "图片上传超过十二兆会被拒绝" }]
+    },
+    {
+      "query": "galaxy",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "sourdough",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "penguin",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "astrophysics",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "volcano",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "orchestra",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "spiral galaxy redshift",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "sourdough bread recipe",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "stock market tomorrow",
+      "scenario": "hard-negative-short-unanswerable",
+      "expect": []
+    },
+    {
+      "query": "journal entry",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["trash-zh"]
+    },
+    {
+      "query": "entry-level",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["trash-zh"]
+    },
+    {
+      "query": "exit poll",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["short-exit-zh"]
+    },
+    {
+      "query": "book setting",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["short-settings-zh"]
+    },
+    {
+      "query": "art authentication",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["auth-zh"]
+    },
+    {
+      "query": "mind upload",
+      "scenario": "hard-negative-short-polysemy",
+      "expect": [],
+      "forbid": ["long-ops"]
+    }
+  ]
+}
