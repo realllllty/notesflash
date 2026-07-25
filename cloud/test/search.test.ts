@@ -167,15 +167,15 @@ function context(options: ContextOptions) {
             };
           }
           if (sql.includes("embedding_status != 'ready'")) {
+            const pendingRows = liveNotes.filter((row) => row.embedding_status !== "ready");
             return {
-              results: liveNotes
-                .filter((row) => row.embedding_status !== "ready")
-                .map((row) => ({
-                  id: row.id,
-                  title: row.title,
-                  body: row.body,
-                  content_hash: row.content_hash,
-                })),
+              results: pendingRows.map((row) => ({
+                id: row.id,
+                title: row.title,
+                body: row.body,
+                content_hash: row.content_hash,
+                total: pendingRows.length,
+              })),
             };
           }
           if (sql.includes("AND id IN")) {
