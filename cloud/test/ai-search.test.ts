@@ -118,7 +118,6 @@ function harness(options: HarnessOptions = {}) {
     cache: false,
     max_num_results: Number(options.env?.AI_SEARCH_MAX_RESULTS ?? 50),
     custom_metadata: [
-      { field_name: "schema_version", data_type: "number" },
       { field_name: "kind", data_type: "text" },
       { field_name: "raw_line_index", data_type: "number" },
       { field_name: "index_hash", data_type: "text" },
@@ -274,7 +273,6 @@ describe("Cloudflare AI Search instance ensure", () => {
       max_num_results: 50,
       cache: false,
       custom_metadata: expect.arrayContaining([
-        { field_name: "schema_version", data_type: "number" },
         { field_name: "index_hash", data_type: "text" },
       ]),
     });

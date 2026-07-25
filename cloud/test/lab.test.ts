@@ -138,7 +138,6 @@ function stubContext(options: StubOptions) {
       max_num_results: 50,
       cache: false,
       custom_metadata: [
-        { field_name: "schema_version", data_type: "number" },
         { field_name: "kind", data_type: "text" },
         { field_name: "raw_line_index", data_type: "number" },
         { field_name: "index_hash", data_type: "text" },
@@ -1303,7 +1302,7 @@ describe("search lab corpus management", () => {
     expect(serialized).not.toContain("private-provider-probe-id");
     expect(serialized).not.toContain("nf_provider_probe");
     const metadata = aiSearchInstance.items.upload.mock.calls[0]?.[2]?.metadata ?? {};
-    expect(metadata).toMatchObject({ schema_version: "1", raw_line_index: "0" });
+    expect(metadata).toMatchObject({ raw_line_index: "0" });
     expect(Object.values(metadata).every((value) => typeof value === "string")).toBe(true);
   });
 });

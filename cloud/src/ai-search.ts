@@ -1,4 +1,4 @@
-import { currentLineSlice, AI_SEARCH_ITEM_SCHEMA_VERSION } from "./ai-search-items";
+import { currentLineSlice } from "./ai-search-items";
 import { hydrateNotes } from "./db";
 import { AppError } from "./http";
 import type { AiSearchItemRow, Env, NoteRow, SearchMatch, SearchResult } from "./types";
@@ -108,7 +108,6 @@ type AiSearchMetadataField = {
 };
 
 const AI_SEARCH_CUSTOM_METADATA: AiSearchMetadataField[] = [
-  { field_name: "schema_version", data_type: "number" },
   { field_name: "kind", data_type: "text" },
   { field_name: "raw_line_index", data_type: "number" },
   { field_name: "index_hash", data_type: "text" },
@@ -237,7 +236,6 @@ export async function probeAiSearchProvider(env: Env): Promise<Record<string, un
       "NotesFlash Cloudflare AI Search provider diagnostic.",
       {
         metadata: {
-          schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
           kind: "body",
           raw_line_index: "0",
           index_hash: "0".repeat(64),
@@ -526,7 +524,6 @@ function providerCandidates(response: AiSearchSearchResponse): {
     missingKey: 0,
     duplicateKey: 0,
     invalidScore: 0,
-    invalidSchemaVersion: 0,
     invalidIndexHash: 0,
     accepted: 0,
     notesFlashKeyShape: 0,
@@ -565,13 +562,6 @@ function providerCandidates(response: AiSearchSearchResponse): {
     }
     if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
       counts.invalidScore += 1;
-      return;
-    }
-    if (
-      schemaVersion !== AI_SEARCH_ITEM_SCHEMA_VERSION &&
-      schemaVersion !== String(AI_SEARCH_ITEM_SCHEMA_VERSION)
-    ) {
-      counts.invalidSchemaVersion += 1;
       return;
     }
     if (typeof indexHash !== "string") {

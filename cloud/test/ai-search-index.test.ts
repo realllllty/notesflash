@@ -199,8 +199,6 @@ function harness(options: HarnessOptions = {}) {
     max_num_results: 50,
     cache: false,
     custom_metadata: [
-      { field_name: "schema_version", data_type: "number" },
-      { field_name: "note_id", data_type: "text" },
       { field_name: "kind", data_type: "text" },
       { field_name: "raw_line_index", data_type: "number" },
       { field_name: "index_hash", data_type: "text" },
@@ -668,7 +666,6 @@ describe("AI Search index synchronization", () => {
       expect(content).toEqual(expect.any(String));
       expect(uploadOptions).toMatchObject({
         metadata: {
-          schema_version: "1",
           index_hash: expect.any(String),
         },
       });
@@ -1402,7 +1399,6 @@ describe("AI Search index synchronization", () => {
       stale.text,
       {
         metadata: expect.objectContaining({
-          schema_version: "1",
           raw_line_index: "0",
           index_hash: stale.index_text_hash,
         }),

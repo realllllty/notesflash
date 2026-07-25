@@ -1,7 +1,6 @@
 import { sha256Hex } from "./crypto";
 import { isImageMarkerLine } from "./chunking";
 
-export const AI_SEARCH_ITEM_SCHEMA_VERSION = 1;
 /**
  * AI Search accepts files up to 4 MB. One million UTF-16 code units encode to
  * at most about 3 MB for BMP text (and about 2 MB for surrogate-pair emoji),
@@ -112,7 +111,6 @@ export async function buildAiSearchItems(
       indexText,
       indexTextHash,
       metadata: {
-        schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
         kind,
         raw_line_index: String(rawLineIndex ?? -1),
         index_hash: indexTextHash,

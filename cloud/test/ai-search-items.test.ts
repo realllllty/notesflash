@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   AI_SEARCH_ITEM_MAX_CODE_UNITS,
-  AI_SEARCH_ITEM_SCHEMA_VERSION,
   buildAiSearchItems,
   currentLineSlice,
 } from "../src/ai-search-items";
@@ -56,7 +55,6 @@ describe("AI Search line item builder", () => {
 
     for (const item of items) {
       expect(item.metadata).toMatchObject({
-        schema_version: String(AI_SEARCH_ITEM_SCHEMA_VERSION),
         kind: item.kind,
         raw_line_index: String(item.rawLineIndex ?? -1),
         index_hash: item.indexTextHash,
