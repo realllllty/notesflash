@@ -1,5 +1,7 @@
 import { hydrateNotes } from "./db";
 import { AppError, json, readJson, requirePrincipal, requireString } from "./http";
+import { retrieveSemanticMatches, toSearchMatch, type SemanticRetrieval } from "./semantic";
+import { semanticConfig, type SemanticConfig } from "./semantic-config";
 import type { NoteRow, RequestContext, SearchResult } from "./types";
 
 function searchLimit(value: string | null, fallback = 30): number {
@@ -83,153 +85,6 @@ interface SemanticBody {
   fallbackOnly?: unknown;
 }
 
-interface RerankerResultLike {
-  id?: unknown;
-  score?: unknown;
-}
-
-interface SemanticNoteExcerpt {
-  id: string;
-  title: string;
-  body_excerpt: string;
-  migration_target?: number;
-}
-
-interface RerankedNote {
-  note: SemanticNoteExcerpt;
-  score: number;
-}
-
-const RERANKER_MODEL = "@cf/baai/bge-reranker-base";
-const DEFAULT_RERANKER_BODY_EXCERPT_CHARS = 1_200;
-const MAX_RERANKER_BODY_EXCERPT_CHARS = 4_000;
-
-function rerankerMinimumScore(context: RequestContext): number {
-  const raw = context.env.RERANKER_MIN_SCORE ?? "0.05";
-  const configured = Number(raw.trim());
-  if (raw.trim() === "" || !Number.isFinite(configured)) {
-    throw new AppError(
-      500,
-      "INVALID_RERANKER_CONFIGURATION",
-      "RERANKER_MIN_SCORE must be a finite number.",
-    );
-  }
-  return configured;
-}
-
-function rerankerBodyExcerptChars(context: RequestContext): number {
-  const raw = context.env.RERANKER_BODY_EXCERPT_CHARS ?? String(DEFAULT_RERANKER_BODY_EXCERPT_CHARS);
-  const configured = Number(raw.trim());
-  if (
-    raw.trim() === "" ||
-    !Number.isInteger(configured) ||
-    configured < 1 ||
-    configured > MAX_RERANKER_BODY_EXCERPT_CHARS
-  ) {
-    throw new AppError(
-      500,
-      "INVALID_RERANKER_CONFIGURATION",
-      `RERANKER_BODY_EXCERPT_CHARS must be an integer between 1 and ${MAX_RERANKER_BODY_EXCERPT_CHARS}.`,
-    );
-  }
-  return configured;
-}
-
-function rerankerNoteText(note: SemanticNoteExcerpt): string {
-  const title = note.title.trim() || "无标题";
-  const bodyExcerpt = note.body_excerpt.trim();
-  return bodyExcerpt ? `${title}\n\n${bodyExcerpt}` : title;
-}
-
-async function rerankNotes(
-  context: RequestContext,
-  query: string,
-  notes: SemanticNoteExcerpt[],
-  limit: number,
-): Promise<RerankedNote[]> {
-  if (notes.length === 0) return [];
-
-  let output: unknown;
-  try {
-    output = await context.env.AI.run(RERANKER_MODEL, {
-      query,
-      contexts: notes.map((note) => ({
-        text: rerankerNoteText(note),
-      })),
-      top_k: Math.min(limit, notes.length),
-    });
-  } catch (error) {
-    console.error("Workers AI reranker request failed", context.requestId, error);
-    throw new AppError(
-      503,
-      "RERANKER_UNAVAILABLE",
-      "Workers AI could not compare the current notes for semantic search.",
-    );
-  }
-
-  const response = output && typeof output === "object"
-    ? (output as { response?: unknown }).response
-    : undefined;
-  if (!Array.isArray(response)) {
-    throw new AppError(
-      502,
-      "INVALID_RERANKER_RESPONSE",
-      "Workers AI returned an invalid reranker response.",
-    );
-  }
-
-  const seenContextIds = new Set<number>();
-  const ranked: RerankedNote[] = [];
-  for (const value of response) {
-    if (!value || typeof value !== "object") {
-      throw new AppError(
-        502,
-        "INVALID_RERANKER_RESPONSE",
-        "Workers AI returned an invalid reranker result.",
-      );
-    }
-    const result = value as RerankerResultLike;
-    const id = result.id;
-    const score = result.score;
-    if (
-      typeof id !== "number" ||
-      !Number.isInteger(id) ||
-      id < 0 ||
-      id >= notes.length ||
-      seenContextIds.has(id) ||
-      typeof score !== "number" ||
-      !Number.isFinite(score)
-    ) {
-      throw new AppError(
-        502,
-        "INVALID_RERANKER_RESPONSE",
-        "Workers AI returned an invalid reranker result.",
-      );
-    }
-    seenContextIds.add(id);
-    ranked.push({ note: notes[id], score });
-  }
-
-  // Never depend on the model response order or the D1 input order for ties.
-  return ranked.sort(
-    (left, right) => right.score - left.score || left.note.id.localeCompare(right.note.id),
-  );
-}
-
-function semanticTopK(context: RequestContext, requested: unknown): number {
-  const configuredValue = Number.parseInt(context.env.SEMANTIC_TOP_K ?? "8", 10);
-  const configured = Number.isFinite(configuredValue)
-    ? Math.min(Math.max(configuredValue, 1), 8)
-    : 8;
-  if (requested === undefined) return configured;
-  if (typeof requested !== "number" || !Number.isInteger(requested) || requested < 1) {
-    throw new AppError(400, "INVALID_INPUT", "limit must be a positive integer.");
-  }
-  // SEMANTIC_TOP_K is the instance owner's response-size ceiling. Older
-  // clients request 30 results unconditionally, so keep the hard maximum.
-  return Math.min(requested, configured);
-}
-
 async function hasLiteralMatch(context: RequestContext, query: string): Promise<boolean> {
   if ([...query].length >= 3) {
     try {
@@ -259,6 +114,16 @@ async function hasLiteralMatch(context: RequestContext, query: string): Promise<
   return row !== null;
 }
 
+function requestedNoteLimit(requested: unknown, configured: number): number {
+  if (requested === undefined) return configured;
+  if (typeof requested !== "number" || !Number.isInteger(requested) || requested < 1) {
+    throw new AppError(400, "INVALID_INPUT", "limit must be a positive integer.");
+  }
+  // SEMANTIC_TOP_K is the instance owner's response-size ceiling. Older clients
+  // request 30 results unconditionally, so keep the hard maximum.
+  return Math.min(requested, configured);
+}
+
 export async function semanticSearch(context: RequestContext): Promise<Response> {
   requirePrincipal(context);
   const body = await readJson<SemanticBody>(context.request);
@@ -267,7 +132,12 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
     throw new AppError(400, "INVALID_INPUT", "fallbackOnly must be a boolean.");
   }
   const fallbackOnly = body.fallbackOnly !== false;
-  const limit = semanticTopK(context, body.limit);
+  const baseConfig = semanticConfig(context.env);
+  const topK = requestedNoteLimit(body.limit, baseConfig.aggregation.topK);
+  const config: SemanticConfig = {
+    ...baseConfig,
+    aggregation: { ...baseConfig.aggregation, topK },
+  };
   const startedAt = performance.now();
 
   // Literal matches are faster, deterministic, and easier to explain. This
@@ -281,7 +151,7 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
         strategy: "lexical-first",
         semanticSkipped: true,
         reason: "literal-match-exists",
-        topK: limit,
+        topK,
         results: [],
       },
       200,
@@ -289,36 +159,13 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
     );
   }
 
-  const minimumScore = rerankerMinimumScore(context);
-  const bodyExcerptCharacters = rerankerBodyExcerptChars(context);
-  const noteScanStartedAt = performance.now();
-  const noteResult = await context.env.DB.prepare(
-    `SELECT id, title, substr(body, 1, ?) AS body_excerpt
-     FROM notes
-     WHERE deleted_at IS NULL
-     ORDER BY id ASC`,
-  )
-    .bind(bodyExcerptCharacters)
-    .all<SemanticNoteExcerpt>();
-  const noteScanDuration = performance.now() - noteScanStartedAt;
+  const retrieval = await retrieveSemanticMatches(context.env, config, query);
+  const selected = retrieval.aggregation.notes;
 
-  const rerankerStartedAt = performance.now();
-  const rankedNotes = await rerankNotes(
-    context,
-    query,
-    noteResult.results,
-    limit,
-  );
-  const rerankerDuration = performance.now() - rerankerStartedAt;
-  const selectedNotes = rankedNotes
-    .filter((note) => note.score >= minimumScore)
-    .slice(0, limit);
-  const scores = new Map(selectedNotes.map((note) => [note.note.id, note.score]));
-
-  // Re-read and hydrate only notes that survived reranking. A concurrent
+  // Re-read and hydrate only notes that survived aggregation. A concurrent
   // deletion naturally removes the note from the response.
   const hydrationStartedAt = performance.now();
-  const selectedIds = selectedNotes.map((note) => note.note.id);
+  const selectedIds = selected.map((note) => note.noteId);
   const selectedRows = selectedIds.length === 0
     ? []
     : (await context.env.DB.prepare(
@@ -335,45 +182,55 @@ export async function semanticSearch(context: RequestContext): Promise<Response>
       .map((id) => selectedRowsById.get(id))
       .filter((row): row is NoteRow => row !== undefined),
   );
-  const hydrationDuration = performance.now() - hydrationStartedAt;
-  const results: SearchResult[] = notes.map((note) => ({
-    ...note,
-    matchType: "semantic",
-    score: scores.get(note.id) ?? null,
-  }));
+  const hydrationMs = performance.now() - hydrationStartedAt;
+
+  const matchesByNote = new Map(selected.map((note) => [note.noteId, note]));
+  const results: SearchResult[] = notes.map((note) => {
+    const aggregated = matchesByNote.get(note.id);
+    return {
+      ...note,
+      matchType: "semantic",
+      score: aggregated?.bestScore ?? null,
+      matches: (aggregated?.matches ?? []).map(toSearchMatch),
+    };
+  });
+
   return json({
     query,
     strategy: "semantic-fallback",
-    rankingStrategy: "direct-bge-reranker",
-    comparisonScope: "all-current-non-deleted-notes",
-    rerankerModel: RERANKER_MODEL,
-    rerankerMinimumScore: minimumScore,
-    bodyExcerptCharacters,
-    topK: limit,
-    comparedNoteCount: noteResult.results.length,
-    scoredNoteCount: rankedNotes.length,
-    matchedNoteCount: selectedNotes.length,
-    topRerankerScore: rankedNotes[0]?.score ?? null,
+    rankingStrategy: "chunk-vector-recall",
+    comparisonScope: "line-level-chunks",
+    embeddingModel: config.spec.id,
+    embeddingDimensions: config.spec.dimensions,
+    chunking: config.chunking,
+    minCosine: config.aggregation.minCosine,
+    relativeMinRatio: config.aggregation.relativeMinRatio,
+    effectiveFloor: retrieval.aggregation.effectiveFloor,
+    topK,
+    chunkTopK: config.chunkTopK,
+    candidateChunkCount: retrieval.indexedCandidateCount,
+    resolvedChunkCount: retrieval.resolvedCandidateCount,
+    matchedChunkCount: retrieval.aggregation.matchedChunkCount,
+    matchedNoteCount: selected.length,
+    topChunkScore: retrieval.aggregation.topChunkScore,
+    pendingIndexCount: retrieval.pendingNoteCount,
+    pendingNotesScored: retrieval.pendingNotesScored,
     results,
   }, 200, {
-    "server-timing": semanticServerTiming(
-      noteScanDuration,
-      rerankerDuration,
-      hydrationDuration,
-      performance.now() - startedAt,
-    ),
+    "server-timing": semanticServerTiming(retrieval, hydrationMs, performance.now() - startedAt),
   });
 }
 
 function semanticServerTiming(
-  notes: number,
-  reranker: number,
+  retrieval: SemanticRetrieval,
   hydrate: number,
   total: number,
 ): string {
   return [
-    `notes;dur=${notes.toFixed(1)}`,
-    `reranker;dur=${reranker.toFixed(1)}`,
+    `embedding;dur=${retrieval.timings.embeddingMs.toFixed(1)}`,
+    `vector;dur=${retrieval.timings.vectorMs.toFixed(1)}`,
+    `resolve;dur=${retrieval.timings.resolveMs.toFixed(1)}`,
+    `pending;dur=${retrieval.timings.pendingMs.toFixed(1)}`,
     `hydrate;dur=${hydrate.toFixed(1)}`,
     `total;dur=${total.toFixed(1)}`,
   ].join(", ");
@@ -381,17 +238,52 @@ function semanticServerTiming(
 
 export async function searchIndexStatus(context: RequestContext): Promise<Response> {
   requirePrincipal(context);
-  const noteCount = await context.env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM notes WHERE deleted_at IS NULL",
+  const config = semanticConfig(context.env);
+  const noteCounts = await context.env.DB.prepare(
+    `SELECT
+       COUNT(*) AS notes,
+       SUM(CASE WHEN embedding_status = 'ready' THEN 1 ELSE 0 END) AS ready,
+       SUM(CASE WHEN embedding_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN embedding_status = 'failed' THEN 1 ELSE 0 END) AS failed
+     FROM notes WHERE deleted_at IS NULL`,
+  ).first<{ notes: number; ready: number | null; pending: number | null; failed: number | null }>();
+  const chunkCount = await context.env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM note_chunks c
+     JOIN notes n ON n.id = c.note_id
+     WHERE n.deleted_at IS NULL AND n.content_hash = c.content_hash`,
   ).first<{ count: number }>();
 
+  let indexedVectorCount: number | null = null;
+  let indexError: string | null = null;
+  try {
+    const details = await context.env.CHUNK_INDEX.describe() as unknown as Record<string, unknown>;
+    const count = typeof details.vectorCount === "number"
+      ? details.vectorCount
+      : typeof details.vectorsCount === "number"
+      ? details.vectorsCount
+      : null;
+    indexedVectorCount = count;
+  } catch (error) {
+    indexError = error instanceof Error ? error.name : "UNKNOWN_ERROR";
+  }
+
   return json({
-    strategy: "direct-bge-reranker",
-    comparisonScope: "all-current-non-deleted-notes",
-    rerankerModel: RERANKER_MODEL,
-    rerankerMinimumScore: rerankerMinimumScore(context),
-    bodyExcerptCharacters: rerankerBodyExcerptChars(context),
-    topK: semanticTopK(context, undefined),
-    currentNoteCount: noteCount?.count ?? 0,
+    strategy: "chunk-vector-recall",
+    comparisonScope: "line-level-chunks",
+    embeddingModel: config.spec.id,
+    embeddingDimensions: config.spec.dimensions,
+    chunking: config.chunking,
+    minCosine: config.aggregation.minCosine,
+    relativeMinRatio: config.aggregation.relativeMinRatio,
+    chunkTopK: config.chunkTopK,
+    topK: config.aggregation.topK,
+    currentNoteCount: noteCounts?.notes ?? 0,
+    readyNoteCount: noteCounts?.ready ?? 0,
+    pendingNoteCount: noteCounts?.pending ?? 0,
+    failedNoteCount: noteCounts?.failed ?? 0,
+    currentChunkCount: chunkCount?.count ?? 0,
+    indexedVectorCount,
+    indexError,
   });
 }

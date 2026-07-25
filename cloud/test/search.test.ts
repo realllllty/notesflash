@@ -1,17 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { semanticSearch } from "../src/search";
+import { buildIdentifiedNoteChunks, DEFAULT_CHUNKING, resolveChunkingOptions } from "../src/chunking";
+import { searchIndexStatus, semanticSearch } from "../src/search";
 import type { NoteRow, RequestContext } from "../src/types";
 
 interface ContextOptions {
-  literal?: boolean;
   query: string;
+  literal?: boolean;
   notes?: NoteRow[];
-  rerankerOutput?: unknown;
-  rerankerError?: Error;
-  rerankerMinimumScore?: string;
-  bodyExcerptCharacters?: string;
+  /**
+   * Cosine score per chunk, keyed by a substring of the chunk text. The first
+   * matching key wins; anything unmatched scores `defaultScore`. Keying on text
+   * keeps these tests independent of how chunk windows happen to split.
+   */
+  scores?: Record<string, number>;
+  defaultScore?: number;
+  /** Chunk ids returned by Vectorize but stale in D1. */
+  staleChunkIds?: string[];
+  vectorError?: Error;
+  embeddingError?: Error;
+  env?: Record<string, string>;
   limit?: number;
+  fallbackOnly?: boolean;
 }
 
 function note(id: string, title: string, body: string): NoteRow {
@@ -21,7 +31,7 @@ function note(id: string, title: string, body: string): NoteRow {
     title,
     body,
     version: 1,
-    content_hash: `hash-${id}`,
+    content_hash: `hash${id.replace(/\W/g, "")}`,
     mutation_id: null,
     created_at: 1,
     updated_at: 2,
@@ -30,70 +40,153 @@ function note(id: string, title: string, body: string): NoteRow {
     archived: 0,
     deleted_at: null,
     embedding_status: "ready",
-    embedding_model: "@cf/baai/bge-m3",
-    embedded_content_hash: `hash-${id}`,
-    embedding_vector_id: `vector-${id}`,
+    embedding_model: "@cf/google/embeddinggemma-300m",
+    embedded_content_hash: `hash${id.replace(/\W/g, "")}`,
+    embedding_vector_id: null,
     embedding_updated_at: 3,
     embedding_error_code: null,
   };
 }
 
+function chunkRowsFor(notes: NoteRow[], chunking = DEFAULT_CHUNKING) {
+  return notes.flatMap((row) =>
+    buildIdentifiedNoteChunks(
+      { noteId: row.id, title: row.title, body: row.body, contentHash: row.content_hash },
+      chunking,
+    ).map((chunk) => ({
+      chunk_id: chunk.chunkId,
+      note_id: row.id,
+      content_hash: row.content_hash,
+      chunk_index: chunk.chunkIndex,
+      kind: chunk.kind,
+      primary_line: chunk.primaryLine,
+      line_start: chunk.lineStart,
+      line_end: chunk.lineEnd,
+      char_start: chunk.charStart,
+      char_end: chunk.charEnd,
+      created_at: 4,
+      note_title: row.title,
+      note_body: row.body,
+      note: row,
+      chunk,
+    }))
+  );
+}
+
 function context(options: ContextOptions) {
   const allNotes = options.notes ?? [];
-  const currentNotes = allNotes
-    .filter((row) => row.deleted_at === null)
-    .sort((left, right) => left.id.localeCompare(right.id));
-  const defaultRerankerOutput = {
-    response: currentNotes.map((_, id) => ({ id, score: 0.9 - id * 0.05 })),
-  };
-  const rerankerOutput = options.rerankerOutput === undefined
-    ? defaultRerankerOutput
-    : options.rerankerOutput;
-  const aiRun = vi.fn(async (model: string) => {
-    if (model !== "@cf/baai/bge-reranker-base") {
-      throw new Error(`Semantic search must not call ${model}`);
+  const liveNotes = allNotes.filter((row) => row.deleted_at === null);
+  const env = options.env ?? {};
+  // Fixtures use the same chunk shape the Worker will resolve from the
+  // environment, so a chunk id in Vectorize always resolves in D1.
+  const chunking = resolveChunkingOptions({
+    maxLines: env.SEMANTIC_CHUNK_MAX_LINES === undefined
+      ? undefined
+      : Number(env.SEMANTIC_CHUNK_MAX_LINES),
+    overlapLines: env.SEMANTIC_CHUNK_OVERLAP_LINES === undefined
+      ? undefined
+      : Number(env.SEMANTIC_CHUNK_OVERLAP_LINES),
+  });
+  const chunkRows = chunkRowsFor(allNotes, chunking);
+  const defaultScore = options.defaultScore ?? 0.1;
+  const scoreForText = (text: string) => {
+    for (const [needle, score] of Object.entries(options.scores ?? {})) {
+      if (text.includes(needle)) return score;
     }
-    if (options.rerankerError) throw options.rerankerError;
-    return rerankerOutput;
-  });
-  const vectorQuery = vi.fn(async () => {
-    throw new Error("Semantic search must not call Vectorize.");
-  });
-  const preparedSql: string[] = [];
+    return defaultScore;
+  };
 
+  const embed = vi.fn(async (_model: string, input: Record<string, unknown>) => {
+    if (options.embeddingError) throw options.embeddingError;
+    const texts = (input.text ?? input.queries ?? input.documents) as string[];
+    const isQuery = input.queries !== undefined ||
+      (typeof texts[0] === "string" && texts[0].startsWith("task: search result | query: "));
+    // A two-dimension stub: the query is the unit vector [1, 0, ...] and each
+    // document vector encodes its intended cosine similarity directly.
+    return {
+      data: texts.map((text) => {
+        const value = isQuery ? 1 : scoreForText(text);
+        const vector = new Array(768).fill(0);
+        vector[0] = value;
+        vector[1] = isQuery ? 0 : Math.sqrt(Math.max(0, 1 - value * value));
+        return vector;
+      }),
+    };
+  });
+
+  const vectorQuery = vi.fn(async () => {
+    if (options.vectorError) throw options.vectorError;
+    return {
+      matches: chunkRows
+        .filter((row) => row.note.embedding_status === "ready")
+        .map((row) => ({ id: row.chunk_id, score: scoreForText(row.chunk.text) }))
+        .sort((left, right) => right.score - left.score),
+    };
+  });
+
+  const preparedSql: string[] = [];
   const db = {
     prepare(sql: string) {
       preparedSql.push(sql);
-      let boundValues: unknown[] = [];
+      let bound: unknown[] = [];
       return {
         bind(...values: unknown[]) {
-          boundValues = values;
+          bound = values;
           return this;
         },
         async first() {
           if (sql.includes("FROM notes_fts")) return options.literal ? { found: 1 } : null;
           if (sql.includes("instr(lower(title)")) return options.literal ? { found: 1 } : null;
-          if (sql.includes("COUNT(*) AS count FROM notes")) return { count: currentNotes.length };
+          if (sql.includes("embedding_status != 'ready'")) {
+            return { count: liveNotes.filter((row) => row.embedding_status !== "ready").length };
+          }
+          if (sql.includes("FROM note_chunks c")) {
+            return {
+              count: chunkRows.filter((row) => row.note.deleted_at === null).length,
+            };
+          }
+          if (sql.includes("SUM(CASE WHEN embedding_status")) {
+            return {
+              notes: liveNotes.length,
+              ready: liveNotes.filter((row) => row.embedding_status === "ready").length,
+              pending: liveNotes.filter((row) => row.embedding_status === "pending").length,
+              failed: 0,
+            };
+          }
           return null;
         },
         async all() {
-          if (sql.includes("substr(body, 1, ?) AS body_excerpt")) {
-            const maximumCharacters = Number(boundValues[0]);
+          if (sql.includes("FROM note_chunks c")) {
+            const ids = new Set(bound.map(String));
             return {
-              results: currentNotes.map((row) => ({
-                id: row.id,
-                title: row.title,
-                body_excerpt: [...row.body].slice(0, maximumCharacters).join(""),
-                migration_target: row.title.includes("迁移") || row.body.includes("迁移") ? 1 : 0,
-              })),
+              results: chunkRows.filter((row) =>
+                ids.has(row.chunk_id) &&
+                row.note.deleted_at === null &&
+                !options.staleChunkIds?.includes(row.chunk_id)
+              ),
+            };
+          }
+          if (sql.includes("embedding_status != 'ready'")) {
+            return {
+              results: liveNotes
+                .filter((row) => row.embedding_status !== "ready")
+                .map((row) => ({
+                  id: row.id,
+                  title: row.title,
+                  body: row.body,
+                  content_hash: row.content_hash,
+                })),
             };
           }
           if (sql.includes("AND id IN")) {
-            const selectedIds = new Set(boundValues.map(String));
-            return { results: currentNotes.filter((row) => selectedIds.has(row.id)) };
+            const ids = new Set(bound.map(String));
+            return { results: liveNotes.filter((row) => ids.has(row.id)) };
           }
           if (sql.includes("FROM note_images")) return { results: [] };
           return { results: [] };
+        },
+        async run() {
+          return { meta: { changes: 1 } };
         },
       };
     },
@@ -102,16 +195,23 @@ function context(options: ContextOptions) {
   const request = new Request("https://notes.example/api/search/semantic", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query: options.query, limit: options.limit ?? 30 }),
+    body: JSON.stringify({
+      query: options.query,
+      limit: options.limit,
+      fallbackOnly: options.fallbackOnly,
+    }),
   });
+
   const requestContext = {
     env: {
       DB: db,
-      AI: { run: aiRun },
-      VECTOR_INDEX: { query: vectorQuery },
-      RERANKER_MIN_SCORE: options.rerankerMinimumScore ?? "0.05",
-      RERANKER_BODY_EXCERPT_CHARS: options.bodyExcerptCharacters ?? "1200",
-      SEMANTIC_TOP_K: "8",
+      AI: { run: embed },
+      CHUNK_INDEX: {
+        query: vectorQuery,
+        describe: vi.fn(async () => ({ vectorCount: chunkRows.length })),
+      },
+      VECTOR_INDEX: { query: vi.fn(), deleteByIds: vi.fn() },
+      ...options.env,
     },
     request,
     url: new URL(request.url),
@@ -119,304 +219,322 @@ function context(options: ContextOptions) {
     principal: { deviceId: "device-1", deviceName: "test", sessionId: "session-1" },
   } as unknown as RequestContext;
 
-  return { requestContext, aiRun, vectorQuery, preparedSql };
+  return { requestContext, embed, vectorQuery, preparedSql, chunkRows };
 }
 
-describe("semantic all-note reranker search", () => {
-  it("short-circuits before the all-note scan when a literal result exists", async () => {
-    const { requestContext, aiRun, vectorQuery, preparedSql } = context({
+const crossLanguageNote = note(
+  "note-en",
+  "Legacy data migration runbook",
+  "Owner: platform team\nStatus: in review\nWe migrate the legacy notes into the new schema.",
+);
+const unrelatedNote = note("note-lunch", "午餐记录", "今天吃了牛肉面，汤头偏咸。");
+
+describe("chunk-level semantic search", () => {
+  it("skips Workers AI and Vectorize when a literal match exists", async () => {
+    const { requestContext, embed, vectorQuery } = context({
       literal: true,
-      query: "迁移-literal-short-circuit",
-      notes: [note("note-1", "数据库迁移", "正文")],
+      query: "literal-short-circuit-query",
+      notes: [crossLanguageNote],
     });
 
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as Record<string, unknown>;
+    const payload = await (await semanticSearch(requestContext)).json() as Record<string, unknown>;
 
     expect(payload).toMatchObject({
       strategy: "lexical-first",
       semanticSkipped: true,
       reason: "literal-match-exists",
-      topK: 8,
       results: [],
     });
-    expect(aiRun).not.toHaveBeenCalled();
+    expect(embed).not.toHaveBeenCalled();
     expect(vectorQuery).not.toHaveBeenCalled();
-    expect(preparedSql.some((sql) => sql.includes("substr(body, 1, ?)"))).toBe(false);
   });
 
-  it("returns a note that could not have been a vector candidate", async () => {
-    const ready = note("note-1", "Ready note", "ordinary text");
-    const pending = note("note-2", "Pending note", "still compared");
-    pending.embedding_status = "pending";
-    const missedByVector = note("note-3", "数据库下线迁移", "需要迁移服务端配置");
-    missedByVector.embedding_status = "failed";
-    missedByVector.embedding_model = null;
-    missedByVector.embedded_content_hash = null;
-    missedByVector.embedding_vector_id = null;
-    const deleted = note("note-4", "Deleted", "must not be compared");
-    deleted.deleted_at = 10;
-    const query = "migrate-all-notes-directly";
-    const { requestContext, aiRun, vectorQuery, preparedSql } = context({
-      query,
-      notes: [ready, pending, missedByVector, deleted],
-      limit: 1,
-      rerankerOutput: { response: [{ id: 2, score: 0.97 }] },
+  it("returns the matched line with character offsets", async () => {
+    const { requestContext } = context({
+      query: "cross-language-line-query",
+      notes: [crossLanguageNote, unrelatedNote],
+      scores: { "We migrate the legacy notes": 0.62, "牛肉面": 0.12 },
     });
 
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as {
+    const payload = await (await semanticSearch(requestContext)).json() as {
       rankingStrategy: string;
-      comparisonScope: string;
-      rerankerModel: string;
-      rerankerMinimumScore: number;
-      bodyExcerptCharacters: number;
-      comparedNoteCount: number;
-      scoredNoteCount: number;
-      matchedNoteCount: number;
-      topRerankerScore: number;
-      results: Array<{ id: string; body: string; score: number }>;
+      embeddingModel: string;
+      results: Array<{
+        id: string;
+        score: number;
+        matches: Array<{
+          kind: string;
+          lineNumber: number;
+          rawLineIndex: number;
+          charStart: number;
+          charEnd: number;
+          text: string;
+          score: number;
+        }>;
+      }>;
     };
 
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(aiRun).toHaveBeenCalledWith("@cf/baai/bge-reranker-base", {
-      query,
-      contexts: [
-        { text: "Ready note\n\nordinary text" },
-        { text: "Pending note\n\nstill compared" },
-        { text: "数据库下线迁移\n\n需要迁移服务端配置" },
-      ],
-      top_k: 1,
-    });
-    expect(vectorQuery).not.toHaveBeenCalled();
-    expect(payload).toMatchObject({
-      rankingStrategy: "direct-bge-reranker",
-      comparisonScope: "all-current-non-deleted-notes",
-      rerankerModel: "@cf/baai/bge-reranker-base",
-      rerankerMinimumScore: 0.05,
-      bodyExcerptCharacters: 1200,
-      comparedNoteCount: 3,
-      scoredNoteCount: 1,
-      matchedNoteCount: 1,
-      topRerankerScore: 0.97,
-    });
-    expect(payload.results).toEqual([
-      expect.objectContaining({
-        id: "note-3",
-        body: "需要迁移服务端配置",
-        score: 0.97,
-      }),
-    ]);
-
-    const scanSql = preparedSql.find((sql) => sql.includes("substr(body, 1, ?)"));
-    expect(scanSql).toContain("WHERE deleted_at IS NULL");
-    expect(scanSql).not.toMatch(/embedding_|\bLIMIT\b|\bIN\s*\(/i);
-    expect(payload).not.toHaveProperty("retrievalModel");
-    expect(payload).not.toHaveProperty("candidateCount");
-    expect(payload).not.toHaveProperty("retrievedCandidateCount");
-    expect(response.headers.get("server-timing")).toContain("notes;dur=");
-    expect(response.headers.get("server-timing")).toContain("reranker;dur=");
-    expect(response.headers.get("server-timing")).toContain("hydrate;dur=");
-    expect(response.headers.get("server-timing")).not.toContain("embedding;");
-    expect(response.headers.get("server-timing")).not.toContain("vector;");
+    expect(payload.rankingStrategy).toBe("chunk-vector-recall");
+    expect(payload.embeddingModel).toBe("@cf/google/embeddinggemma-300m");
+    expect(payload.results).toHaveLength(1);
+    const [result] = payload.results;
+    expect(result.id).toBe("note-en");
+    expect(result.score).toBeCloseTo(0.62, 6);
+    const [match] = result.matches;
+    expect(match.kind).toBe("body");
+    expect(match.lineNumber).toBe(3);
+    expect(match.rawLineIndex).toBe(2);
+    expect(crossLanguageNote.body.slice(match.charStart, match.charEnd)).toBe(match.text);
+    expect(match.text).toContain("We migrate the legacy notes");
   });
 
-  it("sends only the configured body excerpt while returning the complete note", async () => {
-    const longBody = "0123456789ABCDEFGHIJ";
-    const emojiBody = "😀123456789XYZ";
-    const query = "bounded-body-excerpt-query";
-    const { requestContext, aiRun, vectorQuery } = context({
-      query,
-      notes: [
-        note("note-1", "Long title", longBody),
-        note("note-2", "Emoji title", emojiBody),
-      ],
-      bodyExcerptCharacters: "10",
-      rerankerOutput: { response: [{ id: 0, score: 0.9 }, { id: 1, score: 0.8 }] },
+  it("returns nothing when every chunk is below the absolute floor", async () => {
+    const { requestContext } = context({
+      query: "below-absolute-floor-query",
+      notes: [crossLanguageNote, unrelatedNote],
+      scores: { "We migrate the legacy notes": 0.24 },
+      defaultScore: 0.2,
     });
 
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as { results: Array<{ id: string; body: string }> };
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      results: unknown[];
+      topChunkScore: number;
+      effectiveFloor: number;
+      matchedChunkCount: number;
+    };
 
-    expect(aiRun).toHaveBeenCalledWith("@cf/baai/bge-reranker-base", {
-      query,
-      contexts: [
-        { text: "Long title\n\n0123456789" },
-        { text: "Emoji title\n\n😀123456789" },
-      ],
-      top_k: 2,
-    });
-    expect(payload.results).toEqual([
-      expect.objectContaining({ id: "note-1", body: longBody }),
-      expect.objectContaining({ id: "note-2", body: emojiBody }),
-    ]);
-    expect(vectorQuery).not.toHaveBeenCalled();
+    expect(payload.results).toEqual([]);
+    expect(payload.matchedChunkCount).toBe(0);
+    expect(payload.topChunkScore).toBeCloseTo(0.24, 6);
+    expect(payload.effectiveFloor).toBeCloseTo(0.3, 6);
   });
 
-  it("keeps calibrated cross-language migration matches while filtering low-score noise", async () => {
-    const { requestContext, vectorQuery } = context({
-      query: "migrate",
-      notes: [
-        note(
-          "note-1",
-          "cloud-service-center-39078 [Story] resouce-base库下线迁移",
-          "acc-resource-fe_1-0-2872_BRANCH\n\n服务端配置管理写\n\n服务端配置管理读\n\n采集规则配置写\n配置管理读写",
-        ),
-        note("note-2", "Unrelated deployment", "ordinary release checklist"),
-      ],
-      rerankerOutput: {
-        response: [
-          { id: 0, score: 0.06876970827579498 },
-          { id: 1, score: 0.004878689534962177 },
-        ],
+  it("suppresses a weak tail behind a clearly better chunk", async () => {
+    const { requestContext } = context({
+      query: "relative-floor-query",
+      notes: [crossLanguageNote, unrelatedNote],
+      scores: { "We migrate the legacy notes": 0.8, "牛肉面": 0.45 },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      effectiveFloor: number;
+      results: Array<{ id: string }>;
+    };
+
+    expect(payload.effectiveFloor).toBeCloseTo(0.48, 6);
+    expect(payload.results.map((result) => result.id)).toEqual(["note-en"]);
+  });
+
+  it("drops chunks that no longer match the current note content", async () => {
+    const chunks = buildIdentifiedNoteChunks(
+      {
+        noteId: crossLanguageNote.id,
+        title: crossLanguageNote.title,
+        body: crossLanguageNote.body,
+        contentHash: crossLanguageNote.content_hash,
+      },
+      DEFAULT_CHUNKING,
+    );
+    const bodyChunk = chunks.find((chunk) => chunk.text.includes("We migrate the legacy notes"));
+    const { requestContext } = context({
+      query: "stale-chunk-query",
+      notes: [crossLanguageNote],
+      scores: { "We migrate the legacy notes": 0.9 },
+      staleChunkIds: [bodyChunk?.chunkId ?? ""],
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      candidateChunkCount: number;
+      resolvedChunkCount: number;
+      results: unknown[];
+    };
+
+    expect(payload.candidateChunkCount).toBeGreaterThan(payload.resolvedChunkCount);
+    // Only the low-scoring title chunk survives, so nothing clears the floor.
+    expect(payload.results).toEqual([]);
+  });
+
+  it("scores a freshly saved note before the indexer reaches it", async () => {
+    const pendingNote = note(
+      "note-pending",
+      "刚保存的笔记",
+      "第一行说明\n配对码十分钟后过期，只能用一次。",
+    );
+    pendingNote.embedding_status = "pending";
+    const { requestContext } = context({
+      query: "pending-note-inline-query",
+      notes: [pendingNote],
+      scores: { "配对码十分钟后过期": 0.71 },
+    });
+
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      pendingIndexCount: number;
+      pendingNotesScored: number;
+      results: Array<{ id: string; matches: Array<{ lineNumber: number; text: string }> }>;
+    };
+
+    expect(payload.pendingIndexCount).toBe(1);
+    expect(payload.pendingNotesScored).toBe(1);
+    expect(payload.results[0].id).toBe("note-pending");
+    expect(payload.results[0].matches[0].text).toContain("配对码");
+    expect(payload.results[0].matches[0].lineNumber).toBe(2);
+  });
+
+  it("caps matched lines per note and keeps the strongest anchor", async () => {
+    const multiLine = note(
+      "note-multi",
+      "运维手册",
+      [
+        "每天检查健康接口是否返回 200。",
+        "每周确认队列没有堆积。",
+        "如果向量数量少于数据库记录数，就重建索引。",
+        "定时任务失败要人工重跑一次。",
+        "配对码过期记录保留一天。",
+      ].join("\n"),
+    );
+    const { requestContext } = context({
+      query: "max-matches-per-note-query",
+      notes: [multiLine],
+      scores: {
+        "每周确认队列": 0.9,
+        "向量数量少于数据库记录数": 0.88,
+        "定时任务失败": 0.86,
+        "配对码过期记录": 0.84,
+      },
+      env: {
+        SEMANTIC_MAX_MATCHES_PER_NOTE: "2",
+        SEMANTIC_CHUNK_MAX_LINES: "1",
+        SEMANTIC_CHUNK_OVERLAP_LINES: "0",
       },
     });
 
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as {
-      rerankerMinimumScore: number;
-      results: Array<{ id: string; score: number }>;
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      matchedChunkCount: number;
+      results: Array<{ score: number; matches: Array<{ score: number; lineNumber: number }> }>;
     };
 
-    expect(payload.rerankerMinimumScore).toBe(0.05);
-    expect(payload.results).toEqual([
-      expect.objectContaining({ id: "note-1", score: 0.06876970827579498 }),
-    ]);
-    expect(vectorQuery).not.toHaveBeenCalled();
+    expect(payload.matchedChunkCount).toBe(4);
+    expect(payload.results[0].matches).toHaveLength(2);
+    expect(payload.results[0].matches.map((match) => match.lineNumber)).toEqual([2, 3]);
+    // The exposed score is the best chunk cosine; the multi-chunk bonus only
+    // influences ordering, so it never inflates what the client displays.
+    expect(payload.results[0].score).toBeCloseTo(0.9, 6);
   });
 
-  it("uses only reranker scores for ordering and threshold filtering", async () => {
-    const { requestContext, vectorQuery } = context({
-      query: "reranker-only-order-query",
-      rerankerMinimumScore: "0.6",
-      notes: [
-        note("note-1", "A", "boundary"),
-        note("note-2", "B", "below threshold"),
-        note("note-3", "C", "highest score"),
-      ],
-      rerankerOutput: {
-        response: [
-          { id: 0, score: 0.6 },
-          { id: 2, score: 0.95 },
-          { id: 1, score: 0.59 },
-        ],
-      },
+  it("honours the requested and configured note limits", async () => {
+    const notes = [crossLanguageNote, unrelatedNote, note("note-3", "第三条", "内容三")];
+    const { requestContext } = context({
+      query: "note-limit-query",
+      notes,
+      scores: { "We migrate the legacy notes": 0.8, "牛肉面": 0.79, "内容三": 0.78 },
+      limit: 1,
+      env: { SEMANTIC_RELATIVE_MIN_RATIO: "0" },
     });
 
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as { results: Array<{ id: string; score: number }> };
+    const payload = await (await semanticSearch(requestContext)).json() as {
+      topK: number;
+      results: unknown[];
+    };
 
-    expect(payload.results).toEqual([
-      expect.objectContaining({ id: "note-3", score: 0.95 }),
-      expect.objectContaining({ id: "note-1", score: 0.6 }),
-    ]);
-    expect(vectorQuery).not.toHaveBeenCalled();
+    expect(payload.topK).toBe(1);
+    expect(payload.results).toHaveLength(1);
   });
 
-  it("does not invoke Workers AI for an empty note collection", async () => {
-    const { requestContext, aiRun, vectorQuery } = context({
-      query: "empty-note-collection-query",
-      notes: [],
-    });
-
-    const response = await semanticSearch(requestContext);
-    const payload = await response.json() as Record<string, unknown>;
-
-    expect(aiRun).not.toHaveBeenCalled();
-    expect(vectorQuery).not.toHaveBeenCalled();
-    expect(payload).toMatchObject({
-      comparedNoteCount: 0,
-      scoredNoteCount: 0,
-      matchedNoteCount: 0,
-      topRerankerScore: null,
-      results: [],
-    });
-  });
-
-  it("returns an explicit error when the reranker is unavailable", async () => {
-    const { requestContext, vectorQuery } = context({
-      query: "direct-reranker-unavailable-query",
-      notes: [note("note-1", "Reranker outage", "no fallback")],
-      rerankerError: new Error("Workers AI unavailable"),
+  it("reports a Vectorize outage as a service error", async () => {
+    const { requestContext } = context({
+      query: "vector-outage-query",
+      notes: [crossLanguageNote],
+      vectorError: new Error("Vectorize unavailable"),
     });
 
     await expect(semanticSearch(requestContext)).rejects.toMatchObject({
       status: 503,
-      code: "RERANKER_UNAVAILABLE",
+      code: "VECTOR_SEARCH_UNAVAILABLE",
+    });
+  });
+
+  it("reports a Workers AI outage as a service error", async () => {
+    const { requestContext, vectorQuery } = context({
+      query: "embedding-outage-query",
+      notes: [crossLanguageNote],
+      embeddingError: new Error("Workers AI unavailable"),
+    });
+
+    await expect(semanticSearch(requestContext)).rejects.toMatchObject({
+      status: 503,
+      code: "EMBEDDING_UNAVAILABLE",
     });
     expect(vectorQuery).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-numeric reranker threshold before scanning notes", async () => {
-    const { requestContext, aiRun, vectorQuery, preparedSql } = context({
-      query: "invalid-reranker-threshold-query",
-      rerankerMinimumScore: "0.5-invalid",
-      notes: [note("note-1", "Unused", "Unused")],
+  it("rejects invalid configuration before calling Workers AI", async () => {
+    const { requestContext, embed, vectorQuery } = context({
+      query: "invalid-config-query",
+      notes: [crossLanguageNote],
+      env: { SEMANTIC_MIN_COSINE: "not-a-number" },
     });
 
     await expect(semanticSearch(requestContext)).rejects.toMatchObject({
       status: 500,
-      code: "INVALID_RERANKER_CONFIGURATION",
+      code: "INVALID_SEMANTIC_CONFIGURATION",
     });
-    expect(aiRun).not.toHaveBeenCalled();
+    expect(embed).not.toHaveBeenCalled();
     expect(vectorQuery).not.toHaveBeenCalled();
-    expect(preparedSql.some((sql) => sql.includes("substr(body, 1, ?)"))).toBe(false);
   });
 
-  it.each(["", "0", "1.5", "4001"])(
-    "rejects invalid body excerpt configuration %j",
-    async (bodyExcerptCharacters) => {
-      const { requestContext, aiRun, vectorQuery } = context({
-        query: `invalid-body-excerpt-${bodyExcerptCharacters || "empty"}`,
-        bodyExcerptCharacters,
-        notes: [note("note-1", "Unused", "Unused")],
-      });
-
-      await expect(semanticSearch(requestContext)).rejects.toMatchObject({
-        status: 500,
-        code: "INVALID_RERANKER_CONFIGURATION",
-      });
-      expect(aiRun).not.toHaveBeenCalled();
-      expect(vectorQuery).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ["missing response", {}],
-    ["non-array response", { response: "invalid" }],
-    ["non-object result", { response: [null] }],
-    ["missing id", { response: [{ score: 0.9 }] }],
-    ["missing score", { response: [{ id: 0 }] }],
-    ["fractional context id", { response: [{ id: 0.5, score: 0.9 }] }],
-    ["negative context id", { response: [{ id: -1, score: 0.9 }] }],
-    ["out-of-range context id", { response: [{ id: 1, score: 0.9 }] }],
-    ["duplicate context id", { response: [{ id: 0, score: 0.9 }, { id: 0, score: 0.8 }] }],
-    ["non-finite score", { response: [{ id: 0, score: Number.NaN }] }],
-  ])("rejects malformed reranker output: %s", async (label, rerankerOutput) => {
-    const { requestContext, vectorQuery } = context({
-      query: `malformed-direct-reranker-${label}`,
-      notes: [note("note-1", "Malformed reranker", label)],
-      rerankerOutput,
+  it("rejects an unsupported embedding model", async () => {
+    const { requestContext } = context({
+      query: "unsupported-model-query",
+      notes: [crossLanguageNote],
+      env: { EMBEDDING_MODEL: "@cf/openai/not-real" },
     });
 
     await expect(semanticSearch(requestContext)).rejects.toMatchObject({
-      status: 502,
-      code: "INVALID_RERANKER_RESPONSE",
+      status: 400,
+      code: "UNSUPPORTED_EMBEDDING_MODEL",
     });
-    expect(vectorQuery).not.toHaveBeenCalled();
   });
 
-  it("accepts an empty reranker response as an empty semantic result", async () => {
-    const { requestContext, vectorQuery } = context({
-      query: "empty-direct-reranker-response-query",
-      notes: [note("note-1", "No reranker result", "valid empty response")],
-      rerankerOutput: { response: [] },
+  it("exposes Server-Timing for each retrieval stage", async () => {
+    const { requestContext } = context({
+      query: "server-timing-query",
+      notes: [crossLanguageNote],
+      scores: { "note-en:2": 0.7 },
     });
 
     const response = await semanticSearch(requestContext);
-    const payload = await response.json() as Record<string, unknown>;
+    const timing = response.headers.get("server-timing") ?? "";
 
-    expect(payload).toMatchObject({ scoredNoteCount: 0, matchedNoteCount: 0, results: [] });
-    expect(vectorQuery).not.toHaveBeenCalled();
+    for (const stage of ["embedding;", "vector;", "resolve;", "pending;", "hydrate;", "total;"]) {
+      expect(timing).toContain(stage);
+    }
+    expect(timing).not.toContain("reranker;");
+  });
+});
+
+describe("search index status", () => {
+  it("reports chunk coverage and configuration", async () => {
+    const pendingNote = note("note-pending", "待索引", "正文");
+    pendingNote.embedding_status = "pending";
+    const { requestContext } = context({
+      query: "status-query",
+      notes: [crossLanguageNote, pendingNote],
+    });
+
+    const payload = await (await searchIndexStatus(requestContext)).json() as Record<string, unknown>;
+
+    expect(payload).toMatchObject({
+      strategy: "chunk-vector-recall",
+      comparisonScope: "line-level-chunks",
+      embeddingModel: "@cf/google/embeddinggemma-300m",
+      embeddingDimensions: 768,
+      minCosine: 0.3,
+      relativeMinRatio: 0.6,
+      currentNoteCount: 2,
+      readyNoteCount: 1,
+      pendingNoteCount: 1,
+    });
+    expect(payload.currentChunkCount).toBeGreaterThan(0);
+    expect(payload.indexedVectorCount).toBeGreaterThan(0);
   });
 });

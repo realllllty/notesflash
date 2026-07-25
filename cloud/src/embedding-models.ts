@@ -66,7 +66,12 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
   },
 };
 
-export const DEFAULT_EMBEDDING_MODEL = "@cf/baai/bge-m3";
+/**
+ * Calibrated against `cloud/eval`: EmbeddingGemma reached R@1 93% / R@3 100%
+ * with 100% line accuracy and the widest positive/negative score gap of the
+ * models Workers AI offers, at roughly a third of Qwen3's query latency.
+ */
+export const DEFAULT_EMBEDDING_MODEL = "@cf/google/embeddinggemma-300m";
 
 export function embeddingModelSpec(id: string | undefined): EmbeddingModelSpec {
   const spec = EMBEDDING_MODELS[id ?? DEFAULT_EMBEDDING_MODEL];

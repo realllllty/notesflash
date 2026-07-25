@@ -40,7 +40,7 @@ if (!existsSync(resolve(deployDir, ".git"))) {
 }
 
 // Source files that are byte-identical between the template and the deployment.
-for (const entry of ["src", "migrations", "tsconfig.json"]) {
+for (const entry of ["src", "migrations", "scripts", "tsconfig.json"]) {
   const target = resolve(deployDir, entry);
   rmSync(target, { recursive: true, force: true });
   cpSync(resolve(cloudDir, entry), target, { recursive: true });

@@ -39,6 +39,8 @@ import {
 } from "./embedding-models";
 import { AppError, json, readJson } from "./http";
 import { enforceRateLimit } from "./rate-limit";
+import { retrieveSemanticMatches } from "./semantic";
+import { semanticConfig } from "./semantic-config";
 import {
   aggregateChunkHits,
   cosineSimilarity,
@@ -747,6 +749,94 @@ async function runReindex(context: RequestContext): Promise<Response> {
   return json({ action: "reindex", pendingNotes: rows.length, enqueued });
 }
 
+async function runLive(context: RequestContext, body: LabBody): Promise<Response> {
+  const includeText = body.includeText === true;
+  const queries = parseQueries(body);
+  const config = semanticConfig(context.env);
+  const reports = [];
+
+  for (const query of queries) {
+    const startedAt = performance.now();
+    const retrieval = await retrieveSemanticMatches(context.env, config, query);
+    const noteIds = retrieval.aggregation.notes.map((note) => note.noteId);
+    const titles = new Map<string, string>();
+    if (includeText && noteIds.length > 0) {
+      const rows = (await context.env.DB.prepare(
+        `SELECT id, title FROM notes WHERE id IN (${noteIds.map(() => "?").join(",")})`,
+      )
+        .bind(...noteIds)
+        .all<{ id: string; title: string }>()).results;
+      for (const row of rows) titles.set(row.id, row.title);
+    }
+
+    reports.push({
+      query,
+      elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+      timings: {
+        embeddingMs: Number(retrieval.timings.embeddingMs.toFixed(1)),
+        vectorMs: Number(retrieval.timings.vectorMs.toFixed(1)),
+        resolveMs: Number(retrieval.timings.resolveMs.toFixed(1)),
+        pendingMs: Number(retrieval.timings.pendingMs.toFixed(1)),
+      },
+      candidateChunkCount: retrieval.indexedCandidateCount,
+      resolvedChunkCount: retrieval.resolvedCandidateCount,
+      pendingNoteCount: retrieval.pendingNoteCount,
+      pendingNotesScored: retrieval.pendingNotesScored,
+      topChunkScore: retrieval.aggregation.topChunkScore,
+      effectiveFloor: retrieval.aggregation.effectiveFloor,
+      matchedChunkCount: retrieval.aggregation.matchedChunkCount,
+      // Same shape as the sweep report, so the harness can score either source.
+      rankedChunks: retrieval.hits
+        .slice()
+        .sort((left, right) => right.score - left.score)
+        .slice(0, 20)
+        .map((hit) => ({
+          noteRef: hit.noteId.slice(0, 8),
+          noteId: includeText ? hit.noteId : undefined,
+          title: includeText ? titles.get(hit.noteId) : undefined,
+          kind: hit.kind,
+          lineNumber: hit.primaryLine,
+          lineStart: hit.lineStart,
+          lineEnd: hit.lineEnd,
+          charStart: hit.charStart,
+          charEnd: hit.charEnd,
+          score: hit.score,
+          text: includeText ? hit.text : undefined,
+        })),
+      results: retrieval.aggregation.notes.map((note, rank) => ({
+        rank: rank + 1,
+        noteRef: note.noteId.slice(0, 8),
+        noteId: includeText ? note.noteId : undefined,
+        title: includeText ? titles.get(note.noteId) : undefined,
+        score: note.score,
+        bestScore: note.bestScore,
+        matchedChunkCount: note.matchedChunkCount,
+        matches: note.matches.map((match) => ({
+          kind: match.kind,
+          lineNumber: match.primaryLine,
+          lineStart: match.lineStart,
+          lineEnd: match.lineEnd,
+          charStart: match.charStart,
+          charEnd: match.charEnd,
+          score: match.score,
+          text: includeText ? match.text : undefined,
+        })),
+      })),
+    });
+  }
+
+  return json({
+    action: "live",
+    includeText,
+    embeddingModel: config.spec.id,
+    embeddingDimensions: config.spec.dimensions,
+    chunking: config.chunking,
+    aggregation: config.aggregation,
+    chunkTopK: config.chunkTopK,
+    queries: reports,
+  });
+}
+
 export async function searchLab(context: RequestContext): Promise<Response> {
   // Rate limiting runs before authorization so a masked 404 cannot be used as a
   // cheap oracle for brute-forcing the token.
@@ -765,6 +855,8 @@ export async function searchLab(context: RequestContext): Promise<Response> {
   switch (action) {
     case "sweep":
       return runSweep(context, body);
+    case "live":
+      return runLive(context, body);
     case "probe":
       return runProbe(context, body);
     case "corpus-stats":
@@ -785,7 +877,7 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       });
     default:
       throw invalid(
-        'action must be one of "sweep", "probe", "corpus-stats", "seed", "cleanup", "reindex", "whoami".',
+        'action must be one of "sweep", "live", "probe", "corpus-stats", "seed", "cleanup", "reindex", "whoami".',
       );
   }
 }

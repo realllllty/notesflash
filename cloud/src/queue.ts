@@ -1,7 +1,20 @@
+import { buildIdentifiedNoteChunks } from "./chunking";
 import { newId } from "./crypto";
-import { documentText, embedText } from "./embedding";
+import { embedTexts } from "./embedding-models";
 import { AppError } from "./http";
-import type { EmbedNoteJob, Env, ImageRow, IndexJob, NoteRow } from "./types";
+import { semanticConfig } from "./semantic-config";
+import type {
+  DeleteChunksJob,
+  EmbedNoteJob,
+  Env,
+  ImageRow,
+  IndexJob,
+  NoteRow,
+} from "./types";
+
+/** Vectorize accepts at most 1000 vectors per upsert from a Worker. */
+const VECTOR_UPSERT_BATCH = 200;
+const D1_STATEMENT_BATCH = 40;
 
 function embeddingErrorCode(error: unknown): string {
   if (error instanceof AppError) return error.code.slice(0, 100);
@@ -12,6 +25,14 @@ function embeddingErrorCode(error: unknown): string {
   return error instanceof Error ? error.name.slice(0, 100) : "UNKNOWN_ERROR";
 }
 
+/**
+ * Embed one note as line-anchored chunks.
+ *
+ * Chunk IDs are derived from the note ID and content hash, so re-running a job
+ * overwrites the same vectors instead of accumulating duplicates. D1 rows for
+ * the note are replaced in a single batch, and vectors that belonged to an
+ * older content hash are removed through a separate idempotent job.
+ */
 async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
   const note = await env.DB.prepare(
     `SELECT * FROM notes
@@ -21,6 +42,7 @@ async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
     .first<NoteRow>();
   if (!note) return;
 
+  const config = semanticConfig(env);
   await env.DB.prepare(
     `UPDATE notes SET embedding_status = 'processing', embedding_error_code = NULL,
        embedding_updated_at = ?
@@ -29,36 +51,65 @@ async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
     .bind(Date.now(), job.noteId, job.version, job.contentHash)
     .run();
 
-  const vector = await embedText(env, documentText(note.title, note.body));
-  const vectorId = `${note.id}:${note.version}:${note.content_hash.slice(0, 12)}`;
-  const model = env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3";
-  await env.VECTOR_INDEX.upsert([
+  const chunks = buildIdentifiedNoteChunks(
     {
-      id: vectorId,
-      values: vector,
-      metadata: {
-        noteId: note.id,
-        version: note.version,
-        contentHash: note.content_hash,
-        model,
-      },
-    },
-  ]);
-
-  // Queue the previous vector for idempotent cleanup before D1 stops pointing
-  // at it. The delete consumer refuses to remove a vector that is still
-  // referenced by a live note, so a lost optimistic race remains safe.
-  if (note.embedding_vector_id && note.embedding_vector_id !== vectorId) {
-    await env.INDEX_QUEUE.send({
-      type: "delete-vector",
-      eventId: newId(),
       noteId: note.id,
-      vectorId: note.embedding_vector_id,
-      createdAt: Date.now(),
-    });
+      title: note.title,
+      body: note.body,
+      contentHash: note.content_hash,
+    },
+    config.chunking,
+  );
+
+  const { vectors } = await embedTexts(
+    env,
+    config.spec,
+    chunks.map((chunk) => chunk.embedText),
+    "document",
+    config.instruction,
+  );
+
+  const upserts = chunks.map((chunk, index) => ({
+    id: chunk.chunkId,
+    values: vectors[index],
+    metadata: {
+      noteId: note.id,
+      contentHash: note.content_hash,
+      model: config.spec.id,
+    },
+  }));
+  for (let offset = 0; offset < upserts.length; offset += VECTOR_UPSERT_BATCH) {
+    await env.CHUNK_INDEX.upsert(upserts.slice(offset, offset + VECTOR_UPSERT_BATCH));
   }
 
   const completedAt = Date.now();
+  const statements = [
+    env.DB.prepare("DELETE FROM note_chunks WHERE note_id = ?").bind(note.id),
+    ...chunks.map((chunk) =>
+      env.DB.prepare(
+        `INSERT INTO note_chunks(
+           chunk_id, note_id, content_hash, chunk_index, kind,
+           primary_line, line_start, line_end, char_start, char_end, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        chunk.chunkId,
+        note.id,
+        note.content_hash,
+        chunk.chunkIndex,
+        chunk.kind,
+        chunk.primaryLine,
+        chunk.lineStart,
+        chunk.lineEnd,
+        chunk.charStart,
+        chunk.charEnd,
+        completedAt,
+      )
+    ),
+  ];
+  for (let offset = 0; offset < statements.length; offset += D1_STATEMENT_BATCH) {
+    await env.DB.batch(statements.slice(offset, offset + D1_STATEMENT_BATCH));
+  }
+
   const update = await env.DB.prepare(
     `UPDATE notes SET
        embedding_status = 'ready', embedding_model = ?,
@@ -66,18 +117,103 @@ async function processEmbedJob(env: Env, job: EmbedNoteJob): Promise<void> {
        embedding_updated_at = ?, embedding_error_code = NULL
      WHERE id = ? AND version = ? AND content_hash = ? AND deleted_at IS NULL`,
   )
-    .bind(model, note.content_hash, vectorId, completedAt, note.id, note.version, note.content_hash)
+    .bind(
+      config.spec.id,
+      note.content_hash,
+      chunks[0]?.chunkId ?? null,
+      completedAt,
+      note.id,
+      note.version,
+      note.content_hash,
+    )
     .run();
 
   if ((update.meta.changes ?? 0) !== 1) {
-    await env.VECTOR_INDEX.deleteByIds([vectorId]);
+    // The note moved on while this job ran; the newer job owns the index.
     return;
   }
 
+  // Remove vectors from older content hashes only after D1 points at the new
+  // chunks, so a lost race can never leave the note unsearchable.
+  await enqueueChunkCleanup(env, note.id, note.content_hash);
+}
+
+async function enqueueChunkCleanup(
+  env: Env,
+  noteId: string,
+  keepContentHash: string | null,
+): Promise<void> {
+  try {
+    await env.INDEX_QUEUE.send({
+      type: "delete-chunks",
+      eventId: newId(),
+      noteId,
+      chunkIds: [],
+      keepContentHash,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error("Could not enqueue chunk cleanup", noteId, error);
+  }
+}
+
+/**
+ * Delete chunk vectors that no longer belong to a live note version.
+ *
+ * Vectorize has no delete-by-filter, so stale IDs are reconstructed from the
+ * chunk rows in D1 plus the explicit ID list carried by the job. Vectors that
+ * are still referenced by the note's current content hash are never removed.
+ */
+async function processDeleteChunksJob(env: Env, job: DeleteChunksJob): Promise<void> {
+  const note = await env.DB.prepare(
+    "SELECT content_hash, deleted_at FROM notes WHERE id = ?",
+  )
+    .bind(job.noteId)
+    .first<{ content_hash: string; deleted_at: number | null }>();
+  const liveHash = note && note.deleted_at === null ? note.content_hash : null;
+
+  const staleRows = (await env.DB.prepare(
+    liveHash === null
+      ? "SELECT chunk_id FROM note_chunks WHERE note_id = ?"
+      : "SELECT chunk_id FROM note_chunks WHERE note_id = ? AND content_hash != ?",
+  )
+    .bind(...(liveHash === null ? [job.noteId] : [job.noteId, liveHash]))
+    .all<{ chunk_id: string }>()).results;
+
+  const explicit = job.chunkIds.filter((id) => id.startsWith(`${job.noteId}:`));
+  const staleIds = [...new Set([...staleRows.map((row) => row.chunk_id), ...explicit])]
+    .filter((id) => liveHash === null || !id.startsWith(`${job.noteId}:${liveHash.slice(0, 6)}:`));
+  if (staleIds.length === 0) return;
+
+  for (let offset = 0; offset < staleIds.length; offset += VECTOR_UPSERT_BATCH) {
+    await env.CHUNK_INDEX.deleteByIds(staleIds.slice(offset, offset + VECTOR_UPSERT_BATCH));
+  }
+
+  const deletions = staleIds.map((id) =>
+    env.DB.prepare("DELETE FROM note_chunks WHERE chunk_id = ?").bind(id)
+  );
+  for (let offset = 0; offset < deletions.length; offset += D1_STATEMENT_BATCH) {
+    await env.DB.batch(deletions.slice(offset, offset + D1_STATEMENT_BATCH));
+  }
+
+  if (liveHash === null) {
+    await env.DB.prepare(
+      `UPDATE notes SET embedding_vector_id = NULL, embedding_status = 'disabled'
+       WHERE id = ? AND deleted_at IS NOT NULL`,
+    )
+      .bind(job.noteId)
+      .run();
+  }
 }
 
 async function processJob(env: Env, job: IndexJob): Promise<void> {
+  if (job.type === "delete-chunks") {
+    await processDeleteChunksJob(env, job);
+    return;
+  }
   if (job.type === "delete-vector") {
+    // Legacy note-level vector cleanup. Deleting a note now also removes its
+    // chunk vectors, so both paths run for jobs queued before the upgrade.
     if (job.vectorId) {
       const liveReference = await env.DB.prepare(
         `SELECT id FROM notes
@@ -86,17 +222,22 @@ async function processJob(env: Env, job: IndexJob): Promise<void> {
       )
         .bind(job.vectorId)
         .first<{ id: string }>();
-      if (liveReference) {
-        throw new Error(`Vector ${job.vectorId} is still referenced by note ${liveReference.id}.`);
+      if (!liveReference) {
+        try {
+          await env.VECTOR_INDEX.deleteByIds([job.vectorId]);
+        } catch (error) {
+          console.warn("Legacy vector cleanup failed", job.vectorId, error);
+        }
       }
-      await env.VECTOR_INDEX.deleteByIds([job.vectorId]);
-      await env.DB.prepare(
-        `UPDATE notes SET embedding_vector_id = NULL, embedding_status = 'disabled'
-         WHERE id = ? AND deleted_at IS NOT NULL AND embedding_vector_id = ?`,
-      )
-        .bind(job.noteId, job.vectorId)
-        .run();
     }
+    await processDeleteChunksJob(env, {
+      type: "delete-chunks",
+      eventId: job.eventId,
+      noteId: job.noteId,
+      chunkIds: [],
+      keepContentHash: null,
+      createdAt: job.createdAt,
+    });
     return;
   }
   await processEmbedJob(env, job);
@@ -164,6 +305,7 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
      WHERE deleted_at IS NOT NULL
        AND deleted_at < ?
        AND embedding_vector_id IS NULL
+       AND NOT EXISTS (SELECT 1 FROM note_chunks c WHERE c.note_id = notes.id)
      ORDER BY deleted_at ASC
      LIMIT 20`,
   )
@@ -181,16 +323,41 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
   }
 
   // A note mutation is never failed merely because Queue is temporarily
-  // unavailable. Deleted notes therefore keep their old vector ID until a
-  // delete job has been accepted, allowing this scheduled repair path to
-  // complete cleanup without a separate operator action.
-  const deletedVectors = await env.DB.prepare(
+  // unavailable. Deleted notes therefore keep their chunk rows until a delete
+  // job has been accepted, allowing this scheduled repair path to complete
+  // cleanup without a separate operator action.
+  const deletedWithChunks = await env.DB.prepare(
+    `SELECT DISTINCT n.id AS id
+     FROM notes n
+     JOIN note_chunks c ON c.note_id = n.id
+     WHERE n.deleted_at IS NOT NULL
+     ORDER BY n.deleted_at ASC
+     LIMIT 50`,
+  ).all<{ id: string }>();
+  for (const note of deletedWithChunks.results) {
+    try {
+      await env.INDEX_QUEUE.send({
+        type: "delete-chunks",
+        eventId: newId(),
+        noteId: note.id,
+        chunkIds: [],
+        keepContentHash: null,
+        createdAt: now,
+      });
+    } catch (error) {
+      console.error("Could not retry deleted chunk cleanup", note.id, error);
+      break;
+    }
+  }
+
+  // Legacy note-level vectors from before chunk indexing still need removal.
+  const legacyVectors = await env.DB.prepare(
     `SELECT * FROM notes
      WHERE deleted_at IS NOT NULL AND embedding_vector_id IS NOT NULL
      ORDER BY deleted_at ASC
      LIMIT 50`,
   ).all<NoteRow>();
-  for (const note of deletedVectors.results) {
+  for (const note of legacyVectors.results) {
     const vectorId = note.embedding_vector_id;
     if (!vectorId) continue;
     try {
@@ -202,50 +369,45 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
         createdAt: now,
       });
     } catch (error) {
-      console.error("Could not retry deleted vector cleanup", note.id, error);
+      console.error("Could not retry legacy vector cleanup", note.id, error);
       break;
     }
   }
 
   // D1 can outlive or be rebound to a newly-created Vectorize index. In that
-  // case every note still says "ready", so the old repair query would never
-  // enqueue a replacement and semantic search would stay empty forever. A
-  // lower Vectorize count is definitive evidence that at least one live D1
-  // reference cannot be represented by the index; requeueing all current rows
-  // is idempotent and restores coverage without operator access to note text.
+  // case every note still says "ready", so the repair query below would never
+  // enqueue a replacement and semantic search would stay empty forever. Fewer
+  // vectors than current chunk rows is definitive evidence that the index
+  // cannot answer for every live line; requeueing is idempotent.
+  const currentModel = semanticConfig(env).spec.id;
   try {
-    const [details, currentReady] = await Promise.all([
-      env.VECTOR_INDEX.describe(),
+    const [details, currentChunks] = await Promise.all([
+      env.CHUNK_INDEX.describe(),
       env.DB.prepare(
-        `SELECT COUNT(*) AS count FROM notes
-         WHERE deleted_at IS NULL
-           AND embedding_status = 'ready'
-           AND embedding_model = ?
-           AND embedded_content_hash = content_hash
-           AND embedding_vector_id IS NOT NULL`,
-      )
-        .bind(env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3")
-        .first<{ count: number }>(),
+        `SELECT COUNT(*) AS count
+         FROM note_chunks c
+         JOIN notes n ON n.id = c.note_id
+         WHERE n.deleted_at IS NULL AND n.content_hash = c.content_hash`,
+      ).first<{ count: number }>(),
     ]);
     const detailsRecord = details as unknown as Record<string, unknown>;
     const vectorCount = typeof detailsRecord.vectorCount === "number"
       ? detailsRecord.vectorCount
       : details.vectorsCount ?? 0;
-    if (vectorCount < (currentReady?.count ?? 0)) {
+    if (vectorCount < (currentChunks?.count ?? 0)) {
       console.warn(
-        "Vectorize contains fewer vectors than D1 references; scheduling a semantic rebuild",
+        "Vectorize contains fewer vectors than D1 chunk rows; scheduling a semantic rebuild",
         vectorCount,
-        currentReady?.count ?? 0,
+        currentChunks?.count ?? 0,
       );
       await env.DB.prepare(
         `UPDATE notes SET embedding_status = 'pending', embedding_error_code = NULL
          WHERE deleted_at IS NULL
            AND embedding_status = 'ready'
            AND embedding_model = ?
-           AND embedded_content_hash = content_hash
-           AND embedding_vector_id IS NOT NULL`,
+           AND embedded_content_hash = content_hash`,
       )
-        .bind(env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3")
+        .bind(currentModel)
         .run();
     }
   } catch (error) {
@@ -255,7 +417,6 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
   }
 
   const staleBefore = Date.now() - 5 * 60 * 1000;
-  const currentModel = env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3";
   const result = await env.DB.prepare(
     `SELECT id, version, content_hash FROM notes
      WHERE deleted_at IS NULL
@@ -270,6 +431,10 @@ export async function retryPendingIndexes(env: Env): Promise<void> {
              OR embedding_model != ?
              OR embedded_content_hash IS NULL
              OR embedded_content_hash != content_hash
+             OR NOT EXISTS (
+               SELECT 1 FROM note_chunks c
+               WHERE c.note_id = notes.id AND c.content_hash = notes.content_hash
+             )
            )
          )
        )

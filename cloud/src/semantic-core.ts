@@ -38,9 +38,15 @@ export interface AggregationOptions {
   topK: number;
 }
 
+/**
+ * Calibrated on the evaluation corpus with EmbeddingGemma line-window chunks:
+ * negative-only queries peaked at 0.231 while the weakest true positive scored
+ * 0.345, so a 0.3 floor rejects "nothing matches" without dropping real hits.
+ * The relative rule then trims the weak tail behind a clearly better chunk.
+ */
 export const DEFAULT_AGGREGATION: AggregationOptions = {
-  minCosine: 0.5,
-  relativeMinRatio: 0.72,
+  minCosine: 0.3,
+  relativeMinRatio: 0.6,
   multiChunkBonus: 0.01,
   maxBonusChunks: 3,
   maxMatchesPerNote: 3,

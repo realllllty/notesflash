@@ -55,6 +55,30 @@
       "model": "@cf/google/embeddinggemma-300m",
       "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": true },
       "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "lines-gemma-no-title": {
+      "note": "Measures how much the title prefix contributes for EmbeddingGemma.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 220, "maxChars": 400, "maxLines": 3, "overlapLines": 1, "titleContext": false },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "single-line-gemma": {
+      "note": "One logical line per chunk with EmbeddingGemma.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 60, "maxChars": 400, "minChars": 0, "maxLines": 1, "overlapLines": 0, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "wide-gemma": {
+      "note": "Paragraph-sized windows with EmbeddingGemma.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 500, "maxChars": 800, "maxLines": 6, "overlapLines": 2, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
+    },
+    "tight-gemma": {
+      "note": "Two-line windows: a compromise between anchor precision and context.",
+      "model": "@cf/google/embeddinggemma-300m",
+      "chunking": { "targetChars": 140, "maxChars": 400, "maxLines": 2, "overlapLines": 1, "titleContext": true },
+      "aggregation": { "minCosine": 0.3, "relativeMinRatio": 0.6 }
     }
   }
 }

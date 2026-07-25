@@ -19,18 +19,17 @@ export interface AiBinding {
 export interface Env {
   DB: D1Database;
   IMAGES: R2Bucket;
+  /** Legacy note-level index (1024 dimensions); kept only for vector cleanup. */
   VECTOR_INDEX: VectorizeIndex;
+  /** Line-level chunk index used by semantic search. */
+  CHUNK_INDEX: VectorizeIndex;
   AI: AiBinding;
   INDEX_QUEUE: Queue<IndexJob>;
 
   INSTANCE_NAME?: string;
   ALLOWED_ORIGINS?: string;
   EMBEDDING_MODEL?: string;
-  EMBEDDING_DIMENSIONS?: string;
   EMBEDDING_INSTRUCTION?: string;
-  /** Legacy note-level reranker knobs; removed once chunk retrieval ships. */
-  RERANKER_MIN_SCORE?: string;
-  RERANKER_BODY_EXCERPT_CHARS?: string;
   SEMANTIC_MIN_COSINE?: string;
   SEMANTIC_RELATIVE_MIN_RATIO?: string;
   SEMANTIC_MULTI_CHUNK_BONUS?: string;
@@ -95,8 +94,42 @@ export interface Note {
 
 export interface SearchResult extends Note {
   matchType: "lexical" | "semantic";
-  /** Lexical rank score or final BGE reranker score; never a Vectorize cosine score. */
+  /** Lexical rank score, or the best chunk cosine similarity for semantic hits. */
   score: number | null;
+  /**
+   * Matched body lines for a semantic hit, strongest first. Absent for lexical
+   * results, where the client already knows the literal match positions.
+   */
+  matches?: SearchMatch[];
+}
+
+/** One matched line range inside a note, with offsets for in-line highlighting. */
+export interface SearchMatch {
+  kind: "title" | "body";
+  /** 1-based body line to scroll to; null for a title match. */
+  lineNumber: number | null;
+  /** Zero-based index into `body.split("\n")`; null for a title match. */
+  rawLineIndex: number | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  charStart: number | null;
+  charEnd: number | null;
+  score: number;
+  text: string;
+}
+
+export interface NoteChunkRow {
+  chunk_id: string;
+  note_id: string;
+  content_hash: string;
+  chunk_index: number;
+  kind: "title" | "body";
+  primary_line: number | null;
+  line_start: number | null;
+  line_end: number | null;
+  char_start: number | null;
+  char_end: number | null;
+  created_at: number;
 }
 
 export interface NoteRow {
@@ -134,7 +167,7 @@ export interface ImageRow {
   created_at: number;
 }
 
-export type IndexJob = EmbedNoteJob | DeleteVectorJob;
+export type IndexJob = EmbedNoteJob | DeleteVectorJob | DeleteChunksJob;
 
 export interface EmbedNoteJob {
   type: "embed-note";
@@ -145,10 +178,22 @@ export interface EmbedNoteJob {
   createdAt: number;
 }
 
+/** Legacy note-level vector cleanup; retained for in-flight jobs and rollback. */
 export interface DeleteVectorJob {
   type: "delete-vector";
   eventId: string;
   noteId: string;
   vectorId: string | null;
+  createdAt: number;
+}
+
+/** Removes chunk vectors and rows that no longer belong to a live note version. */
+export interface DeleteChunksJob {
+  type: "delete-chunks";
+  eventId: string;
+  noteId: string;
+  chunkIds: string[];
+  /** Chunks of this content hash are kept; everything else for the note goes. */
+  keepContentHash: string | null;
   createdAt: number;
 }

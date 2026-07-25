@@ -29,16 +29,21 @@ interface StubOptions {
 
 /**
  * Deterministic stand-in for a real embedding model: each text maps to a fixed
- * vector so cosine ordering is predictable without calling Workers AI.
+ * vector so cosine ordering is predictable without calling Workers AI. The
+ * width follows the model so dimension validation still applies.
  */
-function stubVector(text: string, vectors: Record<string, number[]>): number[] {
+function stubVector(text: string, vectors: Record<string, number[]>, dimensions: number): number[] {
   const match = Object.entries(vectors).find(([needle]) => text.includes(needle));
   const seed = match ? match[1] : [0.05, 0.05, 0.05];
-  const vector = new Array(1024).fill(0);
+  const vector = new Array(dimensions).fill(0);
   seed.forEach((value, index) => {
     vector[index] = value;
   });
   return vector;
+}
+
+function modelDimensions(model: string): number {
+  return model === "@cf/google/embeddinggemma-300m" ? 768 : 1024;
 }
 
 function stubContext(options: StubOptions) {
@@ -51,9 +56,9 @@ function stubContext(options: StubOptions) {
   const queueBatches: unknown[] = [];
   const deletedVectorIds: string[][] = [];
 
-  const aiRun = vi.fn(async (_model: string, input: Record<string, unknown>) => {
+  const aiRun = vi.fn(async (model: string, input: Record<string, unknown>) => {
     const texts = (input.text ?? input.queries ?? input.documents) as string[];
-    return { data: texts.map((text) => stubVector(text, vectors)) };
+    return { data: texts.map((text) => stubVector(text, vectors, modelDimensions(model))) };
   });
 
   const db = {

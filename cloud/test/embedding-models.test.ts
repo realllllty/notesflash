@@ -18,7 +18,8 @@ function vector(dimensions: number, seed: number): number[] {
 
 describe("embeddingModelSpec", () => {
   it("returns the default model and rejects unknown models", () => {
-    expect(embeddingModelSpec(undefined).id).toBe("@cf/baai/bge-m3");
+    expect(embeddingModelSpec(undefined).id).toBe("@cf/google/embeddinggemma-300m");
+    expect(embeddingModelSpec(undefined).dimensions).toBe(768);
     expect(embeddingModelSpec("@cf/qwen/qwen3-embedding-0.6b").dimensions).toBe(1024);
     expect(() => embeddingModelSpec("@cf/unknown/model")).toThrow(
       /Unsupported embedding model/,

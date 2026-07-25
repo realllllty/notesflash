@@ -5,15 +5,19 @@
   "type": "module",
   "cloudflare": {
     "bindings": {
+      "CHUNK_INDEX": {
+        "description": "Line-level semantic index. EmbeddingGemma vectors with **768 dimensions** and the **cosine** metric."
+      },
       "VECTOR_INDEX": {
-        "description": "NotesFlash uses BGE-M3 vectors with **1024 dimensions** and the **cosine** metric."
+        "description": "Legacy note-level index (**1024 dimensions**, **cosine**). Only used to clean up vectors from older releases."
       }
     }
   },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "npm run db:migrate:remote && wrangler deploy",
+    "deploy": "npm run vectorize:ensure && npm run db:migrate:remote && wrangler deploy",
     "deploy:worker": "wrangler deploy",
+    "vectorize:ensure": "node scripts/ensure-vectorize.mjs",
     "check": "tsc --noEmit",
     "eval": "node eval/run-eval.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
