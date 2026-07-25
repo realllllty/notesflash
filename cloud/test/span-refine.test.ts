@@ -53,7 +53,7 @@ const queryVector = (() => {
 })();
 
 describe("spanCandidates", () => {
-  it("offers whole lines, clauses, and windows, shortest first", () => {
+  it("offers whole lines and clause splits, shortest first", () => {
     const candidates = spanCandidates(chunkText, 24);
 
     expect(candidates.length).toBeGreaterThan(3);
@@ -79,6 +79,14 @@ describe("spanCandidates", () => {
     const text = "Rotate the image signing key if a signed URL leaks, then audit the device list.";
     const candidates = spanCandidates(text, 24);
     expect(candidates.some((candidate) => candidate.text.startsWith("then audit"))).toBe(true);
+  });
+
+  it("never splits inside a number or abbreviation", () => {
+    const text = "Text embeddings cost $0.012 per million input tokens, e.g. for indexing.";
+    for (const candidate of spanCandidates(text, 24)) {
+      expect(candidate.text).not.toMatch(/\$0$/);
+      expect(candidate.text).not.toMatch(/^012/);
+    }
   });
 });
 

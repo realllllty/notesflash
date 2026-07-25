@@ -13,7 +13,9 @@ import { cosineSimilarity, type ChunkHit } from "./semantic-core";
 import type { Env } from "./types";
 
 /** Clause boundaries used to cut a line into candidate phrases. */
-const CLAUSE_BOUNDARY = /[，。；、,;:：!?！？]/;
+const CLAUSE_BOUNDARY = /[，。；、：！？]/;
+/** Latin boundaries are only honoured when whitespace follows, see below. */
+const LATIN_CLAUSE_BOUNDARY = /[.,;:!?]/;
 const CJK_PATTERN = /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
 
 export interface SpanRefineOptions {
@@ -34,9 +36,11 @@ export interface SpanRefineOptions {
 export const DEFAULT_SPAN_REFINE: SpanRefineOptions = {
   enabled: false,
   minChunkChars: 40,
-  maxCandidates: 24,
+  maxCandidates: 12,
   maxNotes: 3,
-  minRatio: 0.92,
+  // A narrowed span must score at least as well as the whole chunk. Anything
+  // lower means the shorter text lost meaning, and the chunk is kept instead.
+  minRatio: 1,
 };
 
 export interface SpanCandidate {
@@ -83,30 +87,28 @@ export function spanCandidates(text: string, maxCandidates: number): SpanCandida
     if (line.trim().length > 0) {
       push(lineStart, lineEnd);
 
-      // Clauses first: they are the most natural highlight unit.
-      let clauseStart = lineStart;
-      for (let index = lineStart; index < lineEnd; index += 1) {
-        if (!CLAUSE_BOUNDARY.test(text[index])) continue;
-        push(clauseStart, index + 1);
-        clauseStart = index + 1;
-      }
-      if (clauseStart < lineEnd) push(clauseStart, lineEnd);
-
-      // Then a few overlapping windows for phrases that cross punctuation.
-      const cjk = isCjkHeavy(line);
-      const windowSize = cjk ? 12 : 36;
-      const stride = Math.max(4, Math.floor(windowSize / 2));
-      if (line.length > windowSize * 1.5) {
-        for (let start = lineStart; start < lineEnd; start += stride) {
-          push(start, Math.min(start + windowSize, lineEnd));
+      // Clause splits only pay off on a longer line; a short line is already
+      // the precise answer.
+      if (line.length >= 24) {
+        const cjk = isCjkHeavy(line);
+        const boundary = cjk ? CLAUSE_BOUNDARY : LATIN_CLAUSE_BOUNDARY;
+        let clauseStart = lineStart;
+        for (let index = lineStart; index < lineEnd; index += 1) {
+          if (!boundary.test(text[index])) continue;
+          // A Latin boundary must be followed by whitespace, so "$0.012" or
+          // "e.g." never splits inside a token.
+          if (!cjk && index + 1 < lineEnd && !/\s/.test(text[index + 1])) continue;
+          push(clauseStart, index + 1);
+          clauseStart = index + 1;
         }
+        if (clauseStart > lineStart && clauseStart < lineEnd) push(clauseStart, lineEnd);
       }
     }
     lineStart = lineEnd + 1;
   }
 
   // Prefer shorter candidates when trimming: they are what makes a highlight
-  // feel precise, and the ratio guard still protects match quality.
+  // feel precise, and the score guard still protects match quality.
   return candidates
     .sort((left, right) => (left.end - left.start) - (right.end - right.start))
     .slice(0, maxCandidates);
