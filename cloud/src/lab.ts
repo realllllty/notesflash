@@ -39,6 +39,7 @@ import {
 } from "./embedding-models";
 import { AppError, json, readJson } from "./http";
 import { enforceRateLimit } from "./rate-limit";
+import { semanticSearch } from "./search";
 import { retrieveSemanticMatches } from "./semantic";
 import { semanticConfig } from "./semantic-config";
 import {
@@ -112,6 +113,7 @@ interface LabBody {
   pruneCache?: unknown;
   models?: unknown;
   chunking?: unknown;
+  fallbackOnly?: unknown;
 }
 
 interface CorpusNote {
@@ -569,6 +571,31 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
   const evalRow = await context.env.DB.prepare(
     "SELECT COUNT(*) AS count FROM notes WHERE deleted_at IS NULL AND title LIKE '[EVAL%'",
   ).first<{ count: number }>();
+  const indexedRow = await context.env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM note_chunks c
+     JOIN notes n ON n.id = c.note_id
+     WHERE n.deleted_at IS NULL AND n.content_hash = c.content_hash`,
+  ).first<{ count: number }>();
+  const staleRow = await context.env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM note_chunks c
+     LEFT JOIN notes n ON n.id = c.note_id
+     WHERE n.id IS NULL OR n.deleted_at IS NOT NULL OR n.content_hash != c.content_hash`,
+  ).first<{ count: number }>();
+
+  let vectorCount: number | null = null;
+  let vectorError: string | null = null;
+  try {
+    const details = await context.env.CHUNK_INDEX.describe() as unknown as Record<string, unknown>;
+    vectorCount = typeof details.vectorCount === "number"
+      ? details.vectorCount
+      : typeof details.vectorsCount === "number"
+      ? details.vectorsCount
+      : null;
+  } catch (error) {
+    vectorError = error instanceof Error ? error.name : "UNKNOWN_ERROR";
+  }
 
   const lengths: number[] = [];
   let chunkCount = 0;
@@ -598,6 +625,10 @@ async function runCorpusStats(context: RequestContext, body: LabBody): Promise<R
       max: percentile(lengths, 1),
     },
     embeddingStatus: Object.fromEntries(statusRows.map((row) => [row.status, row.count])),
+    indexedChunkRows: indexedRow?.count ?? 0,
+    staleChunkRows: staleRow?.count ?? 0,
+    vectorizeVectorCount: vectorCount,
+    vectorizeError: vectorError,
     cachedEmbeddings: cacheRow?.count ?? 0,
   });
 }
@@ -837,6 +868,88 @@ async function runLive(context: RequestContext, body: LabBody): Promise<Response
   });
 }
 
+/**
+ * Call the production search handler itself, so the response contract that
+ * clients consume is verified rather than just the retrieval internals.
+ */
+async function runApi(context: RequestContext, body: LabBody): Promise<Response> {
+  const includeText = body.includeText === true;
+  const queries = parseQueries(body);
+  const fallbackOnly = body.fallbackOnly !== false;
+  const reports = [];
+
+  for (const query of queries) {
+    const startedAt = performance.now();
+    const request = new Request("https://internal/api/search/semantic", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, fallbackOnly }),
+    });
+    const response = await semanticSearch({
+      env: context.env,
+      request,
+      url: new URL(request.url),
+      requestId: context.requestId,
+      // The lab is already authorized; searchSemantic only needs a principal to
+      // exist, and no device-specific data reaches the response.
+      principal: context.principal ?? {
+        deviceId: "search-lab",
+        deviceName: "search-lab",
+        sessionId: "search-lab",
+      },
+    });
+    const payload = await response.json() as Record<string, unknown>;
+    const results = Array.isArray(payload.results) ? payload.results : [];
+
+    reports.push({
+      query,
+      status: response.status,
+      elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+      serverTiming: response.headers.get("server-timing"),
+      strategy: payload.strategy,
+      semanticSkipped: payload.semanticSkipped ?? false,
+      effectiveFloor: payload.effectiveFloor,
+      topChunkScore: payload.topChunkScore,
+      candidateChunkCount: payload.candidateChunkCount,
+      pendingIndexCount: payload.pendingIndexCount,
+      results: results.map((item) => {
+        const record = item as Record<string, unknown>;
+        const matches = Array.isArray(record.matches) ? record.matches : [];
+        const noteBody = typeof record.body === "string" ? record.body : "";
+        return {
+          noteRef: String(record.id ?? "").slice(0, 8),
+          noteId: includeText ? record.id : undefined,
+          title: includeText ? record.title : undefined,
+          score: record.score,
+          matchType: record.matchType,
+          bodyLength: noteBody.length,
+          matches: matches.map((value) => {
+            const match = value as Record<string, unknown>;
+            const charStart = typeof match.charStart === "number" ? match.charStart : null;
+            const charEnd = typeof match.charEnd === "number" ? match.charEnd : null;
+            const slice = charStart !== null && charEnd !== null
+              ? noteBody.slice(charStart, charEnd)
+              : null;
+            return {
+              kind: match.kind,
+              lineNumber: match.lineNumber,
+              rawLineIndex: match.rawLineIndex,
+              charStart,
+              charEnd,
+              score: match.score,
+              // Proves the offsets address the same text the client will render.
+              offsetsMatchText: slice === null ? null : slice === match.text,
+              text: includeText ? match.text : undefined,
+            };
+          }),
+        };
+      }),
+    });
+  }
+
+  return json({ action: "api", includeText, fallbackOnly, queries: reports });
+}
+
 export async function searchLab(context: RequestContext): Promise<Response> {
   // Rate limiting runs before authorization so a masked 404 cannot be used as a
   // cheap oracle for brute-forcing the token.
@@ -857,6 +970,8 @@ export async function searchLab(context: RequestContext): Promise<Response> {
       return runSweep(context, body);
     case "live":
       return runLive(context, body);
+    case "api":
+      return runApi(context, body);
     case "probe":
       return runProbe(context, body);
     case "corpus-stats":
